@@ -1,0 +1,8 @@
+## Interface: 120000
+## Title: RaidCooldowns
+## Notes: Advanced raid cooldowns, alerts, utilities & voice cues
+## Author: Valszone
+## Version: 0.1
+## SavedVariables: RaidCooldownsDB
+
+RaidCooldowns.lua
