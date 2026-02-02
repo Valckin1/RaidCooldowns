@@ -6,7 +6,6 @@
 -- SAVED VARIABLES
 ------------------------------------------------
 RaidCooldownsDB = RaidCooldownsDB or {}
-
 RaidCooldownsDB.settings = RaidCooldownsDB.settings or {
     barWidth   = 180,
     barHeight  = 18,
@@ -20,7 +19,7 @@ RaidCooldownsDB.layout = RaidCooldownsDB.layout or {
     height = 300,
 }
 
-
+RaidCooldownsDB.columns = RaidCooldownsDB.columns or {}
 ------------------------------------------------
 -- INTERNAL STATE
 ------------------------------------------------
@@ -278,14 +277,17 @@ ownersText:Hide()
 bar.ownersText = ownersText
 
 
-        RC.spells[spellID] = {
-            spellID = spellID,
-            name    = data.name,
-            class   = data.class,
-            bar     = bar,
-            owners  = {},
-            hasOwners = false,
-        }
+       RC.spells[spellID] = {
+    spellID = spellID,
+    name    = data.name,
+    class   = data.class,
+    bar     = bar,
+    owners  = {},
+    hasOwners = false,
+
+    column  = 1, -- DEFAULT COLUMN (1, 2, or 3)
+}
+
 
         table.insert(RC.ordered, RC.spells[spellID])
     end
@@ -402,6 +404,40 @@ local LayoutHandlers = {}
 
 -- LAYOUT DISPATCHER & TEMPLATE HANDLERS
 LayoutHandlers.COLUMN_LIST = function()
+local s = RaidCooldownsDB.settings
+
+local columns = {
+    [1] = {},
+    [2] = {},
+    [3] = {},
+}
+
+-- Group spells by assigned column
+local paddingX = 16
+local paddingY = -16
+local colGap   = 24
+
+for colIndex = 1, 3 do
+    local colGroups = columns[colIndex]
+    local y = paddingY
+
+    local x = paddingX + (colIndex - 1) * (s.barWidth + colGap)
+
+    for _, group in ipairs(colGroups) do
+        local bar = group.bar
+        bar:Show()
+
+        bar:SetSize(s.barWidth, s.barHeight)
+        bar:ClearAllPoints()
+        bar:SetPoint("TOPLEFT", panel, x, y)
+
+        -- icon / fill / label setup here
+
+        y = y - s.barHeight - s.barSpacing
+    end
+end
+
+
     local s = RaidCooldownsDB.settings
 
     local paddingX = 16
@@ -977,9 +1013,29 @@ ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 
+
+
 ev:SetScript("OnEvent", function(_, event, addon)
     if event == "ADDON_LOADED" and addon == "RaidCooldowns" then
     CreateGroups()
+	if event == "ADDON_LOADED" and addon == "RaidCooldowns" then
+
+    -- 🔒 HARD GUARANTEE: columns always exist
+    RaidCooldownsDB.columns = RaidCooldownsDB.columns or {}
+
+    CreateGroups()
+    UpdatePanelMouseState()
+    UpdateLayout()
+end
+
+	-- Restore column assignments
+for spellID, group in pairs(RC.spells) do
+    if RaidCooldownsDB.columns[spellID] then
+        group.column = RaidCooldownsDB.columns[spellID]
+    else
+        RaidCooldownsDB.columns[spellID] = group.column
+    end
+end
     UpdatePanelMouseState()
 
     -- 🧪 TEST: force ICON_BAR layout
