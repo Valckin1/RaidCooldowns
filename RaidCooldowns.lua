@@ -33,18 +33,53 @@ RC.version = "0.1.1"
 local ICON_GAP = 6
 
 ------------------------------------------------
--- HEALING COOLDOWNS (SOURCE OF TRUTH)
+-- HEALING / RAID COOLDOWNS (SOURCE OF TRUTH)
 ------------------------------------------------
 local HEALING_COOLDOWNS = {
-    [740]    = { name = "Tranquility", class = "DRUID" },
-    [108280] = { name = "Healing Tide Totem", class = "SHAMAN" },
-    [98008]  = { name = "Spirit Link Totem", class = "SHAMAN" },
-    [64843]  = { name = "Divine Hymn", class = "PRIEST" },
-    [62618]  = { name = "Power Word: Barrier", class = "PRIEST" },
-    [115310] = { name = "Revival", class = "MONK" },
-    [31821]  = { name = "Aura Mastery", class = "PALADIN" },
-    [363534] = { name = "Rewind", class = "EVOKER" },
+
+    -- DRUID
+    [740]    = { name = "Tranquility", class = "DRUID", cooldown = 180 },
+    [33891]  = { name = "Incarnation: Tree of Life", class = "DRUID", cooldown = 180 },
+    [29166]  = { name = "Innervate", class = "DRUID", cooldown = 180 },
+    [20484]  = { name = "Rebirth", class = "DRUID", cooldown = 600 },
+
+    -- SHAMAN
+    [108280] = { name = "Healing Tide Totem", class = "SHAMAN", cooldown = 180 },
+    [98008]  = { name = "Spirit Link Totem", class = "SHAMAN", cooldown = 180 },
+    [114052] = { name = "Ascendance", class = "SHAMAN", cooldown = 180 },
+    [2825]   = { name = "Bloodlust", class = "SHAMAN", cooldown = 300 },
+
+    -- PRIEST
+    [64843]  = { name = "Divine Hymn", class = "PRIEST", cooldown = 180 },
+    [47788]  = { name = "Guardian Spirit", class = "PRIEST", cooldown = 180 },
+    [33206]  = { name = "Pain Suppression", class = "PRIEST", cooldown = 180 },
+    [62618]  = { name = "Power Word: Barrier", class = "PRIEST", cooldown = 180 },
+    [421453] = { name = "Ultimate Penitence", class = "PRIEST", cooldown = 240 },
+
+    -- MONK
+    [115310] = { name = "Revival", class = "MONK", cooldown = 180 },
+    [388615] = { name = "Restoral", class = "MONK", cooldown = 180 },
+
+    -- PALADIN
+    [31821]  = { name = "Aura Mastery", class = "PALADIN", cooldown = 180 },
+
+    -- EVOKER
+    [363534] = { name = "Rewind", class = "EVOKER", cooldown = 240 },
+
+    -- DEATH KNIGHT
+    [51052]  = { name = "Anti-Magic Zone", class = "DEATHKNIGHT", cooldown = 240 },
+    [61999]  = { name = "Raise Ally", class = "DEATHKNIGHT", cooldown = 600 },
+
+    -- MAGE
+    [80353]  = { name = "Time Warp", class = "MAGE", cooldown = 300 },
+
+    -- DEMON HUNTER
+    [196718] = { name = "Darkness", class = "DEMONHUNTER", cooldown = 300 },
+
+    -- WARLOCK
+    [20707]  = { name = "Soulstone", class = "WARLOCK", cooldown = 600 },
 }
+
 
 ------------------------------------------------
 -- HELPERS
