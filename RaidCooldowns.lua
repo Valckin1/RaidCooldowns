@@ -20,6 +20,8 @@ RaidCooldownsDB.layout = RaidCooldownsDB.layout or {
 }
 
 RaidCooldownsDB.columns = RaidCooldownsDB.columns or {}
+RaidCooldownsDB.order = RaidCooldownsDB.order or {}
+
 ------------------------------------------------
 -- INTERNAL STATE
 ------------------------------------------------
@@ -44,6 +46,7 @@ local OWNER_PADDING = 4
 ------------------------------------------------
 local templateDrop
 local reset
+local UpdateLayout
 
 ------------------------------------------------
 -- BAR TEMPLATES
@@ -139,7 +142,153 @@ end
 
 
 
+------------------------------------------------
+-- SHOW COLUMN MENU
+------------------------------------------------
 
+local function ShowColumnMenu(group, anchor)
+    -- 🔒 SAFETY: ensure column always exists
+    if type(group.column) ~= "number" then
+        group.column = 1
+        RaidCooldownsDB.columns[group.spellID] = 1
+    end
+
+    local menu = {
+        {
+            text = "Move to Column",
+            isTitle = true,
+            notCheckable = true,
+        },
+        {
+            text = "Column 1",
+            checked = (group.column == 1),
+            func = function()
+                group.column = 1
+                RaidCooldownsDB.columns[group.spellID] = 1
+                UpdateLayout()
+            end,
+        },
+        {
+            text = "Column 2",
+            checked = (group.column == 2),
+            func = function()
+                group.column = 2
+                RaidCooldownsDB.columns[group.spellID] = 2
+                UpdateLayout()
+            end,
+        },
+        {
+            text = "Column 3",
+            checked = (group.column == 3),
+            func = function()
+                group.column = 3
+                RaidCooldownsDB.columns[group.spellID] = 3
+                UpdateLayout()
+            end,
+        },
+    }
+
+    EasyMenu(
+        menu,
+        CreateFrame("Frame", nil, UIParent, "UIDropDownMenuTemplate"),
+        anchor,
+        0,
+        0,
+        "MENU"
+    )
+end
+
+------------------------------------------------
+-- GET COLUMN FROM Y 
+------------------------------------------------
+local function GetOrderFromY(columnGroups, dropY)
+    local count = #columnGroups
+    if count == 0 then
+        return 1
+    end
+
+    if not dropY then
+        return count + 1
+    end
+
+    local firstBar = columnGroups[1].bar
+    if not firstBar or not firstBar:GetTop() then
+        return count + 1
+    end
+
+    local barHeight = firstBar:GetHeight()
+    local spacing   = RaidCooldownsDB.settings.barSpacing
+    local slotHeight = barHeight + spacing
+
+    local topY = firstBar:GetTop()
+
+    -- distance from top of column
+    local offset = topY - dropY
+
+    -- raw floating index
+    local rawIndex = offset / slotHeight
+
+    -- 🔒 DEADZONE (40%)
+    local DEADZONE = 0.40
+
+    local slot
+    if rawIndex < 0 then
+        slot = 1
+    else
+        local base = math.floor(rawIndex)
+        local frac = rawIndex - base
+
+        if frac > (0.5 + DEADZONE / 2) then
+            slot = base + 2
+        elseif frac < (0.5 - DEADZONE / 2) then
+            slot = base + 1
+        else
+            -- inside deadzone → snap to nearest
+            slot = base + 1
+        end
+    end
+
+    if slot < 1 then
+        slot = 1
+    elseif slot > count + 1 then
+        slot = count + 1
+    end
+
+    return slot
+end
+
+
+
+
+
+
+------------------------------------------------
+-- GET COLUMN FROM X 
+------------------------------------------------
+local function GetColumnFromX(x)
+    local s = RaidCooldownsDB.settings
+    local colGap = 24
+
+    local totalWidth = (3 * s.barWidth) + (2 * colGap)
+    local startX
+
+    if s.centerBars then
+        startX = (panel:GetWidth() - totalWidth) / 2
+    else
+        startX = 16
+    end
+
+    for col = 1, 3 do
+        local colStart = startX + (col - 1) * (s.barWidth + colGap)
+        local colEnd   = colStart + s.barWidth
+
+        if x >= colStart and x <= colEnd then
+            return col
+        end
+    end
+
+    return nil
+end
 
 
 ------------------------------------------------
@@ -241,57 +390,112 @@ bg:SetColorTexture(0, 0, 0, 0.7)
 ------------------------------------------------
 local function CreateGroups()
     for spellID, data in pairs(HEALING_COOLDOWNS) do
-        local bar = CreateFrame("Frame", nil, panel)
+local bar = CreateFrame("Button", nil, panel)
+
+-- Enable mouse for dragging
+bar:EnableMouse(true)
+bar:SetMovable(true)
+bar:SetClampedToScreen(true)
+bar:RegisterForDrag("LeftButton")
+
+-- DRAG START
+bar:SetScript("OnDragStart", function(self)
+    if RC.locked then return end
+
+    RC.dragging = true
+    RC.suppressLayout = true
+
+    self:SetFrameStrata("HIGH")
+    self:SetAlpha(0.85)
+
+    self:StartMoving()
+end)
+
+-- DRAG STOP
+bar:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+
+    self:SetFrameStrata("MEDIUM")
+    self:SetAlpha(1)
+
+    RC.dragging = false
+    RC.suppressLayout = false
+
+    HandleBarDrop(self)
+end)
+
+
+-- ❌ HARD DISABLE default click handling
+bar:SetScript("OnClick", nil)
+
+bar:SetMovable(true)
+bar:SetClampedToScreen(true)
+bar:RegisterForDrag("LeftButton")
+bar:EnableMouse(true)
+
+
+
+     
+
+
+
+           
+
         bar.spellID = spellID
         bar.class = data.class
 
         -- Icon
         local icon = bar:CreateTexture(nil, "OVERLAY")
         icon:SetPoint("LEFT", 0, 0)
-		icon:SetTexture(C_Spell.GetSpellTexture(spellID))
-icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        icon:SetTexture(C_Spell.GetSpellTexture(spellID))
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         bar.icon = icon
 
         -- Fill
-       local fill = CreateFrame("StatusBar", nil, bar)
-fill:SetFrameLevel(bar:GetFrameLevel())
-
-
+        local fill = CreateFrame("StatusBar", nil, bar)
+        fill:SetFrameLevel(bar:GetFrameLevel())
         fill:SetStatusBarTexture("Interface\\TARGETINGFRAME\\UI-StatusBar")
         fill:SetMinMaxValues(0, 1)
         fill:SetValue(1)
-		fill:SetHeight(RaidCooldownsDB.settings.barHeight - 4)
         bar.fill = fill
 
         -- Label
-       local label = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-label:SetText(data.name)
-label:SetDrawLayer("OVERLAY", 2)
-bar.label = label
+        local label = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetText(data.name)
+        label:SetDrawLayer("OVERLAY", 2)
+        bar.label = label
 
-		-- Owners text block (SPELL_OWNERS template only)
-local ownersText = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-ownersText:SetJustifyH("LEFT")
-ownersText:SetJustifyV("TOP")
-ownersText:Hide()
-bar.ownersText = ownersText
+        -- Owners text
+        local ownersText = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        ownersText:SetJustifyH("LEFT")
+        ownersText:SetJustifyV("TOP")
+        ownersText:Hide()
+        bar.ownersText = ownersText
+		-- 🔒 Prevent child frames from stealing mouse input
+bar.icon:EnableMouse(false)
+bar.fill:EnableMouse(false)
+bar.label:EnableMouse(false)
+bar.ownersText:EnableMouse(false)
 
+
+        local col = RaidCooldownsDB.columns[spellID] or 1
 
        RC.spells[spellID] = {
-    spellID = spellID,
-    name    = data.name,
-    class   = data.class,
-    bar     = bar,
-    owners  = {},
+    spellID   = spellID,
+    name      = data.name,
+    class     = data.class,
+    bar       = bar,
+    owners    = {},
     hasOwners = false,
-
-    column  = 1, -- DEFAULT COLUMN (1, 2, or 3)
+    column    = col,
+    order     = RaidCooldownsDB.order and RaidCooldownsDB.order[spellID] or 1,
 }
 
 
         table.insert(RC.ordered, RC.spells[spellID])
     end
 end
+
 
 ------------------------------------------------
 -- Bar Anchor
@@ -376,12 +580,16 @@ end
 -- UPDATE PANEL MOUSE STATE
 ------------------------------------------------
 local function UpdatePanelMouseState()
-    if RC.locked then
-        panel:EnableMouse(false)
-    else
-        panel:EnableMouse(true)
+    panel:EnableMouse(not RC.locked)
+
+    for _, group in pairs(RC.spells) do
+        local bar = group.bar
+        if bar then
+            bar:EnableMouse(not RC.locked)
+        end
     end
 end
+
 
 
 ------------------------------------------------
@@ -396,114 +604,172 @@ local function ApplyClassColor(bar, class)
     end
 end
 
+------------------------------------------------
+-- HANDLE BAR DROP
+------------------------------------------------
+function HandleBarDrop(bar)
+    if RC.locked then
+        UpdateLayout()
+        return
+    end
+
+    RaidCooldownsDB.order = RaidCooldownsDB.order or {}
+
+    local group = RC.spells[bar.spellID]
+    if not group then
+        UpdateLayout()
+        return
+    end
+
+    -- COLUMN CALC (X AXIS)
+    local barCenterX = bar:GetCenter()
+    local panelLeft = panel:GetLeft()
+    if not barCenterX or not panelLeft then
+        UpdateLayout()
+        return
+    end
+
+    local relativeX = barCenterX - panelLeft
+    local newCol = GetColumnFromX(relativeX)
+    if not newCol then
+        UpdateLayout()
+        return
+    end
+
+    -- BUILD COLUMN LIST (EXCLUDING SELF)
+    local columnGroups = {}
+    for _, g in pairs(RC.spells) do
+        if g.column == newCol and g ~= group then
+            table.insert(columnGroups, g)
+        end
+    end
+
+    table.sort(columnGroups, function(a, b)
+        return (a.order or 1) < (b.order or 1)
+    end)
+
+    -- ORDER CALC (Y AXIS)
+local dropY = bar:GetTop() - (bar:GetHeight() / 2)
+
+if not dropY then
+    UpdateLayout()
+    return
+end
+
+
+   local top = bar:GetTop()
+if not top then
+    UpdateLayout()
+    return
+end
+
+local dropY = top - (bar:GetHeight() / 2)
+local dropY = select(2, bar:GetCenter())
+local newOrder = GetOrderFromY(columnGroups, dropY)
+
+-- 🔒 Prevent multi-slot jumps
+if group.order then
+    if newOrder > group.order + 1 then
+        newOrder = group.order + 1
+    elseif newOrder < group.order - 1 then
+        newOrder = group.order - 1
+    end
+end
+
+    -- ASSIGN
+    group.column = newCol
+    group.order = newOrder
+
+    -- NORMALIZE ORDERS
+    for i, g in ipairs(columnGroups) do
+        if i >= newOrder then
+            g.order = i + 1
+        else
+            g.order = i
+        end
+        RaidCooldownsDB.order[g.spellID] = g.order
+    end
+
+    RaidCooldownsDB.columns[group.spellID] = newCol
+    RaidCooldownsDB.order[group.spellID] = newOrder
+
+    UpdateLayout()
+end
+
+
 
 ------------------------------------------------
--- UPDATE LAYOUT
+-- LAYOUT HANDLERS
 ------------------------------------------------
-local LayoutHandlers = {}
+LayoutHandlers = {}
+
 
 -- LAYOUT DISPATCHER & TEMPLATE HANDLERS
 LayoutHandlers.COLUMN_LIST = function()
-local s = RaidCooldownsDB.settings
-
-local columns = {
-    [1] = {},
-    [2] = {},
-    [3] = {},
-}
-
--- Group spells by assigned column
-local paddingX = 16
-local paddingY = -16
-local colGap   = 24
-
-for colIndex = 1, 3 do
-    local colGroups = columns[colIndex]
-    local y = paddingY
-
-    local x = paddingX + (colIndex - 1) * (s.barWidth + colGap)
-
-    for _, group in ipairs(colGroups) do
-        local bar = group.bar
-        bar:Show()
-
-        bar:SetSize(s.barWidth, s.barHeight)
-        bar:ClearAllPoints()
-        bar:SetPoint("TOPLEFT", panel, x, y)
-
-        -- icon / fill / label setup here
-
-        y = y - s.barHeight - s.barSpacing
-    end
-end
-
-
     local s = RaidCooldownsDB.settings
-
     local paddingX = 16
     local paddingY = -16
-    local colGap   = 24
+    local colGap = 24
 
-    local barH = s.barHeight + s.barSpacing
-    local panelW = panel:GetWidth()
+    -- Build columns
+    local columns = { [1]={}, [2]={}, [3]={} }
 
-    -- How many bars fit vertically
-    local maxRows = math.floor(
-        (panel:GetHeight() - 32) / barH
-    )
-    if maxRows < 1 then maxRows = 1 end
+    for _, group in pairs(RC.spells) do
+        local col = group.column or 1
+        if col < 1 or col > 3 then col = 1 end
+        table.insert(columns[col], group)
+    end
 
-    local col = 0
-    local row = 0
+    -- Sort each column by order
+    for col = 1, 3 do
+        table.sort(columns[col], function(a, b)
+            return (a.order or 1) < (b.order or 1)
+        end)
+    end
 
-    for _, group in ipairs(RC.ordered) do
-        local bar = group.bar
-        bar:Show()
+    -- Layout columns
+    for colIndex = 1, 3 do
+        local totalWidth = (3 * s.barWidth) + (2 * colGap)
+        local startX
 
-        bar:SetSize(s.barWidth, s.barHeight)
-        bar:ClearAllPoints()
+        if s.centerBars then
+            startX = (panel:GetWidth() - totalWidth) / 2
+        else
+            startX = paddingX
+        end
 
-        local totalWidth = (col + 1) * s.barWidth + col * colGap
-local startX
+        local x = startX + (colIndex - 1) * (s.barWidth + colGap)
+        local y = paddingY
 
-if s.centerBars then
-    startX = (panel:GetWidth() - totalWidth) / 2
-else
-    startX = paddingX
-end
+        for _, group in ipairs(columns[colIndex]) do
+            local bar = group.bar
+            bar:Show()
 
-local x = startX + col * (s.barWidth + colGap)
+            bar:SetSize(s.barWidth, s.barHeight)
+            bar:ClearAllPoints()
+            bar:SetPoint("TOPLEFT", panel, x, y)
 
-        local y = paddingY - row * barH
+            bar.icon:Show()
+            bar.icon:SetSize(s.barHeight, s.barHeight)
+            bar.icon:ClearAllPoints()
+            bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
 
-        bar:SetPoint("TOPLEFT", panel, x, y)
+            bar.fill:Show()
+            bar.fill:ClearAllPoints()
+            bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 6, 0)
+            bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
 
-        -- Icon
-        bar.icon:Show()
-        bar.icon:SetSize(s.barHeight, s.barHeight)
-        bar.icon:ClearAllPoints()
-        bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
+            ApplyClassColor(bar, group.class)
 
-        -- Fill
-        bar.fill:Show()
-        bar.fill:ClearAllPoints()
-        bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 6, 0)
-        bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
-        ApplyClassColor(bar, group.class)
+            bar.label:Show()
+            bar.label:ClearAllPoints()
+            bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4, 0)
 
-        -- Label
-        bar.label:Show()
-        bar.label:ClearAllPoints()
-        bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4, 0)
-
-        -- Advance row / column
-        row = row + 1
-        if row >= maxRows then
-            row = 0
-            col = col + 1
+            y = y - s.barHeight - s.barSpacing
         end
     end
 end
+
 
 
 LayoutHandlers.BAR_ONLY = function()
@@ -567,19 +833,6 @@ bar:SetPoint(point, panel, x, y)
     end
 end
 
-
-local function UpdateLayout()
-    local template = RaidCooldownsDB.settings.template
-    local handler = LayoutHandlers[template]
-
-    if handler then
-        handler()
-    end
-end
-
-------------------------------------------------
--- LAYOUT HANDLERS
-------------------------------------------------
 
 LayoutHandlers.ICON_BAR = function()
     local s = RaidCooldownsDB.settings
@@ -740,6 +993,28 @@ bar:SetPoint(point, panel, x, y)
 end
 
 
+------------------------------------------------
+-- UPDATE LAYOUT
+------------------------------------------------
+function UpdateLayout()
+    -- 🔒 HARD BLOCK during ANY interaction
+    if RC.dragging or RC.suppressLayout then
+        return
+    end
+
+    local template = RaidCooldownsDB.settings.template
+    local handler = LayoutHandlers[template]
+
+    if handler then
+        handler()
+    end
+end
+
+
+
+
+
+
 
 
 
@@ -882,6 +1157,7 @@ lock:SetChecked(RC.locked)
 lock:SetScript("OnClick", function(self)
     RC.locked = self:GetChecked()
     UpdatePanelMouseState()
+	
 
     if RC.locked then
         bg:SetColorTexture(0, 0, 0, 0.7)
@@ -968,12 +1244,12 @@ UIDropDownMenu_Initialize(templateDrop, function(self, level)
             checked = (RaidCooldownsDB.settings.template == id),
             func = function()
                 RaidCooldownsDB.settings.template = id
-                UIDropDownMenu_SetText(templateDrop, BAR_TEMPLATES[id])
                 UpdateLayout()
             end,
         })
     end
 end)
+
 
 
 ------------------------------------------------
@@ -1013,36 +1289,31 @@ ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 
-
-
 ev:SetScript("OnEvent", function(_, event, addon)
+
     if event == "ADDON_LOADED" and addon == "RaidCooldowns" then
-    CreateGroups()
-	if event == "ADDON_LOADED" and addon == "RaidCooldowns" then
+        ------------------------------------------------
+        -- INIT
+        ------------------------------------------------
+        CreateGroups()
 
-    -- 🔒 HARD GUARANTEE: columns always exist
-    RaidCooldownsDB.columns = RaidCooldownsDB.columns or {}
+        -- Saved column container
+        RaidCooldownsDB.columns = RaidCooldownsDB.columns or {}
+		RaidCooldownsDB.order = RaidCooldownsDB.order or {}
 
-    CreateGroups()
-    UpdatePanelMouseState()
-    UpdateLayout()
-end
 
-	-- Restore column assignments
-for spellID, group in pairs(RC.spells) do
-    if RaidCooldownsDB.columns[spellID] then
-        group.column = RaidCooldownsDB.columns[spellID]
-    else
-        RaidCooldownsDB.columns[spellID] = group.column
+        -- Default column assignment
+        for spellID, group in pairs(RC.spells) do
+            if not RaidCooldownsDB.columns[spellID] then
+                RaidCooldownsDB.columns[spellID] = 1
+            end
+            group.column = RaidCooldownsDB.columns[spellID]
+        end
+
+        UpdatePanelMouseState()
+        UpdateLayout()
+        return
     end
-end
-    UpdatePanelMouseState()
-
-    -- 🧪 TEST: force ICON_BAR layout
-    RaidCooldownsDB.settings.template = "ICON_BAR"
-    UpdateLayout()
-end
-
 
     if event == "PLAYER_LOGIN" or event == "GROUP_ROSTER_UPDATE" then
         UpdateOwners()
