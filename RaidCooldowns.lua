@@ -36,6 +36,9 @@ RC.version = "0.1.1"
 -- CONSTANTS
 ------------------------------------------------
 local ICON_GAP = 6
+local OWNER_LINE_HEIGHT = 14
+local OWNER_PADDING = 4
+
 
 ------------------------------------------------
 -- FORWARD DECLARATIONS
@@ -550,52 +553,129 @@ LayoutHandlers.ICON_BAR = function()
         local bar = group.bar
         bar:Show()
 
-        bar:SetSize(s.barWidth, s.barHeight)
+        ------------------------------------------------
+        -- BUILD OWNER TEXT (single line for now)
+        ------------------------------------------------
+        local owners = {}
+        if group.hasOwners then
+            for name in pairs(group.owners) do
+                table.insert(owners, name)
+            end
+        end
+        table.sort(owners)
+
+        local ownerText = table.concat(owners, ", ")
+        local hasOwnerLine = (#owners > 0)
+
+        ------------------------------------------------
+        -- BAR HEIGHT (EXPANDS IF OWNERS EXIST)
+        ------------------------------------------------
+local barHeight =
+    s.barHeight +
+    (hasOwnerLine and (OWNER_LINE_HEIGHT + OWNER_PADDING + 2) or 0)
+
+
+        bar:SetSize(s.barWidth, barHeight)
         bar:ClearAllPoints()
-      local point, x = GetBarAnchorX(s.barWidth)
-bar:SetPoint(point, panel, x, y)
 
+        local point, x = GetBarAnchorX(s.barWidth)
+        bar:SetPoint(point, panel, x, y)
 
+        ------------------------------------------------
+        -- ICON
+        ------------------------------------------------
         bar.icon:Show()
-        bar.icon:SetSize(s.barHeight, s.barHeight)
         bar.icon:ClearAllPoints()
-        bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
+        bar.icon:SetSize(s.barHeight, s.barHeight)
+        bar.icon:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
 
+        ------------------------------------------------
+        -- BAR FILL
+        ------------------------------------------------
         bar.fill:Show()
         bar.fill:ClearAllPoints()
-        bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 6, 0)
-        bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
+bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", 6, 0)
+bar.fill:SetPoint("TOPRIGHT", bar, "TOPRIGHT", -4, 0)
+bar.fill:SetPoint("BOTTOMLEFT", bar.icon, "BOTTOMRIGHT", 6, 0)
+bar.fill:SetPoint("BOTTOMRIGHT", bar, "TOPRIGHT", -4, -s.barHeight)
+
 
         ApplyClassColor(bar, group.class)
 
+        ------------------------------------------------
+        -- SPELL LABEL
+        ------------------------------------------------
         bar.label:Show()
         bar.label:ClearAllPoints()
        bar.label:ClearAllPoints()
-bar.label:SetPoint("LEFT", bar.icon, "RIGHT", 8, 0)
-bar.label:SetPoint("RIGHT", bar, "RIGHT", -6, 0)
--- STEP 3: lock label size & behavior
-bar.label:SetJustifyH("LEFT")
-bar.label:SetJustifyV("MIDDLE")
-bar.label:SetWordWrap(false)
-bar.label:SetMaxLines(1)
-
--- hard width cap (prevents overlap)
-bar.label:SetWidth(
-    s.barWidth - s.barHeight - 14
+bar.label:SetPoint(
+    "TOPLEFT",
+    bar.icon,
+    "TOPRIGHT",
+    6,
+    0
+)
+bar.label:SetPoint(
+    "TOPRIGHT",
+    bar,
+    "TOPRIGHT",
+    -6,
+    0
 )
 
-bar.label:SetJustifyH("LEFT")
-bar.label:SetJustifyV("MIDDLE")
-bar.label:SetWordWrap(false)
-bar.label:SetMaxLines(1)
-bar.label:SetDrawLayer("OVERLAY")
-bar.label:SetJustifyH("LEFT")
-bar.label:SetWordWrap(false)
+
+        bar.label:SetJustifyH("LEFT")
+        bar.label:SetJustifyV("MIDDLE")
+        bar.label:SetWordWrap(false)
+        bar.label:SetMaxLines(1)
+        bar.label:SetDrawLayer("OVERLAY", 2)
+
+        ------------------------------------------------
+        -- OWNER TEXT (UNDER BAR)
+        ------------------------------------------------
+        if hasOwnerLine then
+            bar.ownersText:Show()
+            bar.ownersText:SetText(ownerText)
+
+            bar.ownersText:ClearAllPoints()
+            bar.ownersText:ClearAllPoints()
+bar.ownersText:ClearAllPoints()
+bar.ownersText:SetPoint(
+    "TOPLEFT",
+    bar.label,
+    "BOTTOMLEFT",
+    0,
+    -2
+)
+
+bar.ownersText:SetWidth(s.barWidth - s.barHeight - 14)
+bar.ownersText:SetHeight(OWNER_LINE_HEIGHT)
+bar.ownersText:SetJustifyH("LEFT")
+bar.ownersText:SetJustifyV("TOP")
+bar.ownersText:SetWordWrap(false)
+bar.ownersText:SetMaxLines(1)
 
 
-        y = y - s.barHeight - s.barSpacing
+            bar.ownersText:SetWidth(
+                s.barWidth - s.barHeight - 14
+            )
+            bar.ownersText:SetHeight(OWNER_LINE_HEIGHT)
+            bar.ownersText:SetJustifyH("LEFT")
+            bar.ownersText:SetJustifyV("TOP")
+            bar.ownersText:SetWordWrap(false)
+            bar.ownersText:SetDrawLayer("OVERLAY", 2)
+        else
+            bar.ownersText:Hide()
+        end
+
+        ------------------------------------------------
+        -- NEXT ROW (USES FULL BAR HEIGHT)
+        ------------------------------------------------
+       y = y - barHeight - s.barSpacing
+
     end
 end
+
 
 LayoutHandlers.ICON_ONLY = function()
     local s = RaidCooldownsDB.settings
