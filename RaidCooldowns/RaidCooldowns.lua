@@ -48,7 +48,7 @@ end
 
 
 
-------------------------------------------------
+
 
 ------------------------------------------------
 -- SENDER MODE (everyone installs lightweight sender addon)
@@ -129,7 +129,7 @@ local HEALING_COOLDOWNS = {
 -- INTERNAL STATE
 ------------------------------------------------
 local RC = {
-    previewOrdered = nil,   -- ⭐ must be inside table like this
+    previewOrdered = nil,  
     dragThrottle = 0,
     dragLastOrder = nil,
 	dragCurrentOrder = nil,
