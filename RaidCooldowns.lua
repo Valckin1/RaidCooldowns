@@ -1,9 +1,82 @@
-print("RaidCooldowns file loaded")
+local UpdateDeathVisual -- forward declare (must be before event handler definition)
+print("|cff00c6ffRaid|r|cffffcc00Cooldowns|r: Type /rcd for in-game configuration ")
+-- Spell info compatibility (Retail uses C_Spell, older clients use global GetSpellInfo)
+function RC_GetSpellInfo(spellID)
+  if spellID == nil then return nil end
+
+  if C_Spell and C_Spell.GetSpellInfo then
+    local info = C_Spell.GetSpellInfo(spellID)
+    if info then
+      return info.name, nil, info.iconID, info.castTimeMS, info.minRange, info.maxRange, info.spellID
+    end
+    return nil
+  end
+
+  if _G.GetSpellInfo then
+    return _G.GetSpellInfo(spellID)
+  end
+
+  return nil
+end
+
+-- Defer layout until a frame has a real size (prevents blank pages on first show after /reload)
+function RC_DeferUntilSized(frame, fn, maxTries)
+  maxTries = maxTries or 120
+  if not frame or not fn then return end
+
+  local tries = 0
+  local function step()
+    tries = tries + 1
+    local w = (frame.GetWidth and frame:GetWidth()) or 0
+    local h = (frame.GetHeight and frame:GetHeight()) or 0
+    if (w and w > 50) and (h and h > 50) then
+      fn()
+      return
+    end
+    if tries >= maxTries then
+      -- Give up quietly; next OnShow/OnSizeChanged will try again.
+      return
+    end
+    C_Timer.After(0, step)
+  end
+
+  C_Timer.After(0, step)
+end
+
+
 
 
 
 
 ------------------------------------------------
+
+------------------------------------------------
+-- SENDER MODE (everyone installs lightweight sender addon)
+------------------------------------------------
+local SENDER_PREFIX = "RAIDCD_SENDER"           -- handshake/status
+local SENDER_DATA_PREFIX = "RAIDCOOLDOWNS"      -- spell broadcast (already used)
+RC = RC or {}
+RC.senderSeen = RC.senderSeen or {} -- [baseName] = { lastSeen=serverTime, version=string, hash=string }
+
+function RC_NormalizeName(name)
+    return name and tostring(name):gsub("%-.*$", "") or ""
+end
+
+function RC_Now()
+    return (GetServerTime and GetServerTime()) or time()
+end
+
+function RC_SenderHashFromDB()
+    local t = RaidCooldownsDB and RaidCooldownsDB.senderSpells or {}
+    local ids = {}
+    for id, enabled in pairs(t) do
+        if enabled ~= false then ids[#ids+1] = tonumber(id) end
+    end
+    table.sort(ids)
+    local s = table.concat(ids, ",")
+    return s == "" and "EMPTY" or s
+end
+
 -- HEALING / RAID COOLDOWNS (SOURCE OF TRUTH)
 ------------------------------------------------
 local HEALING_COOLDOWNS = {
@@ -76,6 +149,17 @@ local RC = {
 
 
 }
+
+-- Expose RC globally for simple /run debugging (safe)
+_G.RC = RC
+RC.debugComms = RC.debugComms or false
+
+-- Slash command to toggle comm debug
+SLASH_RAIDCOOLDOWNSDEBUG1 = "/rccddebug"
+SlashCmdList["RAIDCOOLDOWNSDEBUG"] = function()
+    RC.debugComms = not RC.debugComms
+    print("[RaidCooldowns] debugComms:", RC.debugComms and "ON" or "OFF")
+end
 -- Drag preview state (gap + live updates)
 RC.dragTargetIndex  = nil      -- for vertical layouts
 RC.dragTargetColumn = nil      -- for COLUMN_LIST
@@ -89,7 +173,7 @@ RC.version = "0.1.1"
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
 ------------------------------------------------
-local function ApplyPanelSizeFromSettings()
+function ApplyPanelSizeFromSettings()
     if not panel then return end
     if not RaidCooldownsDB or not RaidCooldownsDB.layout then return end
 
@@ -145,6 +229,62 @@ end)
 
 
 ------------------------------------------------
+-- TextColor compatibility helper
+-- Supports both RC_SetTextColor(FontString, r,g,b[,a]) and RC_SetTextColor(FontString, color[,a])
+------------------------------------------------
+local _RC_TEXTCOLOR_USES_COLORMIXIN
+
+function RC_SetTextColor(fs, r, g, b, a)
+    if not fs or not fs.SetTextColor then return end
+
+    local rr, gg, bb, aa = r, g, b, a
+
+    -- Accept {r,g,b,a} or ColorMixin-like objects
+    if type(r) == "table" then
+        local t = r
+        if type(t.GetRGB) == "function" then
+            rr, gg, bb = t:GetRGB()
+            aa = (type(t.GetRGBA) == "function" and select(4, t:GetRGBA())) or t.a or a
+        else
+            rr = t.r or t[1]
+            gg = t.g or t[2]
+            bb = t.b or t[3]
+            aa = t.a or t[4] or a
+        end
+    end
+
+    -- Hard defaults
+    rr = tonumber(rr) or 1
+    gg = tonumber(gg) or 1
+    bb = tonumber(bb) or 1
+    aa = tonumber(aa)
+
+    -- Detect API shape once
+    if _RC_TEXTCOLOR_USES_COLORMIXIN == nil then
+        local ok = pcall(fs.SetTextColor, fs, rr, gg, bb, aa or 1)
+        _RC_TEXTCOLOR_USES_COLORMIXIN = not ok
+        if ok then return end
+    end
+
+    if _RC_TEXTCOLOR_USES_COLORMIXIN then
+        local color = nil
+        if type(CreateColor) == "function" then
+            color = CreateColor(rr, gg, bb)
+        else
+            -- Fallback: some clients accept plain tables
+            color = { r = rr, g = gg, b = bb }
+        end
+        if aa ~= nil then
+            pcall(fs.SetTextColor, fs, color, aa)
+        else
+            pcall(fs.SetTextColor, fs, color)
+        end
+    else
+        pcall(fs.SetTextColor, fs, rr, gg, bb, aa or 1)
+    end
+end
+
+------------------------------------------------
 -- Forward Declarations
 ------------------------------------------------
 local ApplyProfile
@@ -161,7 +301,8 @@ local GetCharKey
 local UpdateAllBarFonts  
 local GetCurrentProfileName
 local ApplyTemplateToAllBars
-local PreCreateAllBars
+-- PreCreateAllBars can be called very early by events; keep it as a global no-op until real impl is assigned later.
+PreCreateAllBars = PreCreateAllBars or function() end
 local DistributeSlidersEvenly
 local RefreshFontDropdown
 local UpdateProfileStatusText
@@ -172,7 +313,7 @@ local HideAllBars
 local rebuildPending = false
 local UpdateDragPreview
 
-local function RC_Debug(msg)
+function RC_Debug(msg)
     if RC and RC.debugMode then
         print("|cff33ff99RaidCooldowns:|r", msg)
     end
@@ -186,6 +327,7 @@ SlashCmdList.RCDDEBUG = function(msg)
         print("|cff33ff99RaidCooldowns:|r debug ON")
     elseif msg == "off" then
         RC.debugMode = false
+RC.debugComms = false  -- set true to print addon comms
         print("|cff33ff99RaidCooldowns:|r debug OFF")
     elseif msg == "dump" then
         if RebuildOrderedList then RebuildOrderedList() end
@@ -200,7 +342,14 @@ end
 ------------------------------------------------
 -- UNIVERSAL VISIBILITY RULE (SINGLE SOURCE)
 ------------------------------------------------
-local function ShouldDisplaySpell(entry)
+-- Forward declarations (Lua executes top-to-bottom)
+-- IsSpellTracked is used early; define it up-front (no local forward decl to avoid nil upvalue)
+function IsSpellTracked(spellID)
+    local t = RaidCooldownsDB and RaidCooldownsDB.trackedSpells
+    if not t then return true end  -- default: tracked
+    return t[spellID] ~= false     -- nil/true => tracked, false => untracked
+end
+function ShouldDisplaySpell(entry)
 
     if not entry then
         return false
@@ -223,13 +372,33 @@ end
 
 
 ------------------------------------------------
+-- EVENT FRAME
+------------------------------------------------
+local ev = CreateFrame("Frame")
+
+-- Register UNIT_SPELLCAST_SUCCEEDED for all group unit tokens (no CLEU).
+-- Retail clients are picky about which unit tokens are registered, so we do them explicitly.
+function RegisterSpellcastUnits()
+    -- Re-register UNIT_SPELLCAST_SUCCEEDED for all relevant unit tokens in ONE call.
+    -- Important: RegisterUnitEvent replaces the unit list each time you call it.
+    ev:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+
+    local units = { "player" }
+    for idx = 1, 4 do units[#units+1] = "party" .. idx end
+    for idx = 1, 40 do units[#units+1] = "raid" .. idx end
+
+    ev:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unpack(units))
+end
+
+------------------------------------------------
 -- DO SPEC REBUILD
 ------------------------------------------------
-local function DoSpecRebuild()
+function DoSpecRebuild()
 
     CreateGroups()
     PreCreateAllBars()
     UpdateOwners()
+        RegisterSpellcastUnits()
     RebuildOrderedList()
 
     RefreshActiveProfileLabel()
@@ -242,7 +411,7 @@ end
 ------------------------------------------------
 -- HARD RESET STATE
 ------------------------------------------------
-local function HardResetState()
+function HardResetState()
 
     -- Stop drag
     RC.previewOrdered   = nil
@@ -290,7 +459,7 @@ end
 ------------------------------------------------
 -- GET TEMPLATE STORAGE
 ------------------------------------------------
-local function GetTemplateStorage()
+function GetTemplateStorage()
 
     local profile  = GetProfile()
     local template = RaidCooldownsDB.settings.template
@@ -322,7 +491,7 @@ end
 ------------------------------------------------
 -- ENSURE TEMPLATE ORDER INITIALIZED 
 ------------------------------------------------
-local function EnsureTemplateOrderInitialized(storage)
+function EnsureTemplateOrderInitialized(storage)
     storage.order   = storage.order   or {}
     storage.columns = storage.columns or {}
 
@@ -464,7 +633,7 @@ end
 ------------------------------------------------
 -- SAFE LAYOUT REFRESH (THROTTLED)
 ------------------------------------------------
-local function SafeRefreshLayout()
+function SafeRefreshLayout()
 if RC and RC.dragging then return end
     if InCombatLockdown() then
         pendingLayoutUpdate = true
@@ -472,6 +641,7 @@ if RC and RC.dragging then return end
     end
 
     UpdateOwners()
+        RegisterSpellcastUnits()
     RebuildOrderedList()
     UpdateLayout()
 end
@@ -479,7 +649,7 @@ end
 ------------------------------------------------
 -- UPDATE BAR MOUSE STATE
 ------------------------------------------------
-local function UpdateBarMouseState()
+function UpdateBarMouseState()
     -- Allow dragging ONLY when:
     -- - Test mode is on
     -- - Panel is unlocked
@@ -494,7 +664,7 @@ end
 ------------------------------------------------
 -- ANCHOR BAR TO PANEL 
 ------------------------------------------------
-local function AnchorBarToPanelTop(bar, y)
+function AnchorBarToPanelTop(bar, y)
     if RaidCooldownsDB.settings.centerBars then
         bar:SetPoint("TOP", panel, "TOP", 0, y)
     else
@@ -533,17 +703,18 @@ end
 ------------------------------------------------
 -- CLEAN LOGIN BOOTSTRAP (NO ADDON_LOADED)
 ------------------------------------------------
-local ev = CreateFrame("Frame")
+
+
 
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 ev:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
-ev:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 ev:RegisterEvent("PLAYER_REGEN_DISABLED")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("TRAIT_CONFIG_UPDATED")
 ev:RegisterEvent("SPELLS_CHANGED")
 ev:RegisterEvent("UNIT_HEALTH")
+ev:RegisterEvent("CHAT_MSG_ADDON")
 
 ev:SetScript("OnEvent", function(self, event, ...)
 
@@ -565,7 +736,7 @@ if event == "ADDON_LOADED" then
 	RaidCooldownsDB.settings.spellNameColor = RaidCooldownsDB.settings.spellNameColor or { r=1, g=1, b=1, a=1 }
 RaidCooldownsDB.settings.cdTextColor    = RaidCooldownsDB.settings.cdTextColor    or { r=1, g=0.82, b=0, a=1 }
   
-  print("DB initialized once")
+
 
 
 end
@@ -575,6 +746,12 @@ end
     C_Timer.After(0.5, function()
 
         InitUI()
+        -- Register addon comms prefix (used to sync cooldowns between clients)
+        if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+            C_ChatInfo.RegisterAddonMessagePrefix("RAIDCOOLDOWNS")
+            C_ChatInfo.RegisterAddonMessagePrefix(SENDER_PREFIX)
+            RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+        end
 		ApplyPanelSizeFromSettings()
 		local charKey = GetCharKey()
 
@@ -582,7 +759,7 @@ end
 if not RaidCooldownsDB.char[charKey] then
     for name in pairs(RaidCooldownsDB.profiles) do
         RaidCooldownsDB.char[charKey] = name
-        print("Assigned default profile to character:", name)
+      
         break
     end
 end
@@ -590,6 +767,7 @@ end
 
 CreateGroups()
 UpdateOwners()
+        RegisterSpellcastUnits()
 PreCreateAllBars()
 UpdateBarMouseState()
 RebuildOrderedList()
@@ -598,6 +776,8 @@ UpdateLayout()
 UpdateProfileStatusText()
        
         UpdatePanelBackground()
+
+        -- Register combat log tracking (safe to defer if in combat)
 
         -- 🔥 FORCE SPEC SYNC
         local specIndex = GetSpecialization()
@@ -705,6 +885,7 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 
         CreateGroups()
         UpdateOwners()
+        RegisterSpellcastUnits()
         RebuildOrderedList()
         PreCreateAllBars()
         UpdateLayout()
@@ -715,6 +896,7 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 end
 
     if event == "GROUP_ROSTER_UPDATE" then
+        RegisterSpellcastUnits()
 	  if RC and RC.dragging then return end
         SafeRefreshLayout()
         return
@@ -736,8 +918,80 @@ RC.dragTargetRow = nil
         SafeRefreshLayout()
         return
     end
+
+if event == "CHAT_MSG_ADDON" then
+    local prefix, msg, channel, sender = ...
+
+    -- Sender handshake/status
+    if prefix == SENDER_PREFIX then
+        if type(msg) ~= "string" then return end
+        local cmd, ver, hash = strsplit(";", msg)
+        local base = RC_NormalizeName(sender)
+        if base ~= "" then
+            RC.senderSeen[base] = RC.senderSeen[base] or {}
+            RC.senderSeen[base].lastSeen = RC_Now()
+            if cmd == "HELLO" or cmd == "PONG" then
+                RC.senderSeen[base].version = ver or RC.senderSeen[base].version
+                RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
+            end
+        end
+        if RC and RC.spellsSenderUI and RC.spellsSenderUI.RefreshSenderList then
+            RC.spellsSenderUI.RefreshSenderList()
+        end
+        return
+    end
+
+
+    -- Bridge support: allows anyone with this addon to track raid CDs without requiring everyone to install.
+    -- RAIDCD_CLOG sends: prefix='RAIDCD_CLEU', msg='<Name-Realm>|<spellID>'
+if prefix == "RAIDCD_CLOG" then
+        if type(msg) ~= "string" then return end
+        local sourceName, spell = msg:match("^(.-)|(%d+)$")
+        local spellID = tonumber(spell)
+        if not sourceName or not spellID then return end
+        sourceName = tostring(sourceName)
+        local sourceBase = sourceName:gsub("%-.+", "")
+
+        for _, entry in ipairs(RC.entries or {}) do
+            if entry.spellID == spellID and not entry.onCooldown then
+                local owner = entry.owner and tostring(entry.owner) or ""
+                local ownerBase = owner:gsub("%-.+", "")
+                if owner == sourceName or ownerBase == sourceBase then
+                    UpdateGroupCooldown(entry)
+                    return
+                end
+            end
+        end
+        return
+    end
+
+    if prefix ~= "RAIDCOOLDOWNS" then return end
+    if RC and RC.debugComms then print("[RaidCooldowns] recv", sender, msg, channel) end
+    if type(msg) ~= "string" or msg == "" then return end
+    local spellID = tonumber(msg)
+    if not spellID then return end
+    sender = sender and string.format("%s", sender) or ""
+    if sender == "" then return end
+    local senderBase = sender:gsub("%-.+", "")
+
+    for _, entry in ipairs(RC.entries or {}) do
+        if entry.spellID == spellID then
+            local owner = entry.owner and string.format("%s", entry.owner) or ""
+            local ownerBase = owner:gsub("%-.+", "")
+            if owner == sender or ownerBase == senderBase then
+                UpdateGroupCooldown(entry)
+            end
+        end
+    end
+    return
+end
+
 if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, castGUID, spellID = ...
+
+    -- Normalize spellID (avoids taint/secret-number comparisons)
+    spellID = tonumber(tostring(spellID))
+    if not spellID then return end
 
     if not unit or not spellID then return end
     if not UnitExists(unit) then return end
@@ -747,11 +1001,33 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
     if realm and realm ~= "" then
         name = name .. "-" .. realm
     end
+    -- Match owners with or without realm suffix (cross-realm groups)
+    local baseName = string.format("%s", (name:gsub("%-.+", "")))
+    local fullName = string.format("%s", name)
 
     -- Match correct entry
     for _, entry in ipairs(RC.entries or {}) do
-        if entry.spellID == spellID and entry.owner == name then
+        local owner = entry.owner and string.format("%s", entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+        if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
             UpdateGroupCooldown(entry)
+            -- Broadcast my cooldown to other addon users
+            if unit and UnitIsUnit(unit, "player") then
+                if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+                    local chan
+                    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+                        chan = "INSTANCE_CHAT"
+                    elseif IsInRaid() then
+                        chan = "RAID"
+                    elseif IsInGroup() then
+                        chan = "PARTY"
+                    end
+                    if chan then
+                        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(spellID), chan)
+                        if RC and RC.debugComms then print("[RaidCooldowns] send", spellID, chan) end
+                    end
+                end
+            end
             break
         end
     end
@@ -766,21 +1042,34 @@ if event == "UNIT_HEALTH" then
     if not unit then return end
     if not UnitExists(unit) then return end
 
-    local name, realm = UnitName(unit)
-    if not name then return end
+    -- Only track health for raid/party units (ignore nameplates/boss units)
+    if type(unit) ~= "string" then return end
+    if not (unit:match("^raid%d+$") or unit:match("^party%d+$") or unit == "player") then return end
 
-    if realm and realm ~= "" then
+    local name, realm = UnitName(unit)
+    -- Normalize strings to avoid taint/secret-string comparison issues
+    name  = name  and string.format("%s", name)  or ""
+    realm = realm and string.format("%s", realm) or ""
+    if name == "" then return end
+
+    if realm ~= "" then
         name = name .. "-" .. realm
     end
+    -- Match owners with or without realm suffix (cross-realm groups)
+    local baseName = string.format("%s", (name:gsub("%-.+", "")))
+    local fullName = string.format("%s", name)
 
     local isDead = UnitIsDeadOrGhost(unit)
 
     for _, entry in ipairs(RC.entries or {}) do
-        if entry.owner == name then
+        local owner = entry.owner and string.format("%s", entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+        local ownerBase = owner:gsub("%-.+", "")
+        if owner == fullName or owner == baseName or ownerBase == baseName then
             entry.isDead = isDead
 
             if entry.bar then
-                UpdateDeathVisual(entry)
+                if UpdateDeathVisual then UpdateDeathVisual(entry) end
             end
         end
     end
@@ -916,7 +1205,9 @@ SHORT_SPELL_NAMES = {
     -- Priest
     [62618]  = "Barrier",
     [64843]  = "Divine Hymn",
-
+	[33206]  = "Pain Suppress",
+	[421453] = "Ult. Penitence",
+	
     -- Druid
     [33891]    = "Incarnation",
 }
@@ -941,6 +1232,17 @@ cdTextSize    = 12,
 shortSpellNames = true,
 
 }
+
+-- Apply defaults once (prevents nil settings causing slider:SetValue(nil) errors)
+do
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.settings = RaidCooldownsDB.settings or {}
+    for k, v in pairs(DEFAULT_SETTINGS) do
+        if RaidCooldownsDB.settings[k] == nil then
+            RaidCooldownsDB.settings[k] = v
+        end
+    end
+end
 
 
 
@@ -989,6 +1291,7 @@ if InCombatLockdown() then
     C_Timer.After(0.5, function()
         CreateGroups()
         UpdateOwners()
+        RegisterSpellcastUnits()
         RebuildOrderedList()
         UpdateLayout()
     end)
@@ -1076,7 +1379,7 @@ end
 ------------------------------------------------
 -- IS SPELL ACTUALLY ACTIVE
 ------------------------------------------------
-local function IsSpellActuallyActive(spellID)
+function IsSpellActuallyActive(spellID)
     local cdInfo = C_Spell.GetSpellCooldown(spellID)
     if not cdInfo then return false end
 
@@ -1094,7 +1397,7 @@ end
 ------------------------------------------------
 -- IS ACTIVE CHOICE SPELL
 ------------------------------------------------
-local function IsActiveChoiceSpell(spellID)
+function IsActiveChoiceSpell(spellID)
 
     local configID = C_ClassTalents.GetActiveConfigID()
     if not configID then return false end
@@ -1171,6 +1474,9 @@ wipe(RC.entries)
         if realm and realm ~= "" then
             name = name .. "-" .. realm
         end
+    -- Match owners with or without realm suffix (cross-realm groups)
+    local baseName = string.format("%s", (name:gsub("%-.+", "")))
+    local fullName = string.format("%s", name)
 
         local _, class = UnitClass(unit)
         if not class then return end
@@ -1325,7 +1631,7 @@ end
 
 
 
-local function RestoreFontDropdown()
+function RestoreFontDropdown()
 
     if not fontDrop then return end
 
@@ -1354,7 +1660,7 @@ end
 ------------------------------------------------
 -- NORMALIZE DROPDOWN
 ------------------------------------------------
-local function NormalizeDropdown(drop)
+function NormalizeDropdown(drop)
     drop:SetHeight(32)
 end
 
@@ -1365,7 +1671,7 @@ end
 -- ⭐ UNIVERSAL AUTO STACK LAYOUT ENGINE
 ------------------------------------------------
 
-local function CreateStack(parent, firstAnchor, xOffset, startY, spacing)
+function CreateStack(parent, firstAnchor, xOffset, startY, spacing)
 
     local stack = {
         parent = parent,
@@ -1409,7 +1715,7 @@ end
 ------------------------------------------------
 -- SECTION SEPARATOR (CENTERED UNDER TITLE)
 ------------------------------------------------
-local function CreateTitleSeparator(parent, titleFS, width)
+function CreateTitleSeparator(parent, titleFS, width)
 
     local sep = CreateFrame("Frame", nil, parent)
     sep:SetHeight(1)
@@ -1457,7 +1763,7 @@ end
 ------------------------------------------------
 -- AUTO HEIGHT CARD
 ------------------------------------------------
-local function CreateCard(parent, header, width)
+function CreateCard(parent, header, width)
     local card = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     card:SetClampedToScreen(true)
     card:SetWidth(width)
@@ -1563,7 +1869,7 @@ end
 ------------------------------------------------
 -- CLAMP PROFILE CARD TO OPTIONS WINDOW
 ------------------------------------------------
-local function ClampCardToPage(card)
+function ClampCardToPage(card)
     if not card or not options then return end
 
     local maxH = options:GetHeight() - 140
@@ -1614,7 +1920,7 @@ end
 ------------------------------------------------
 -- GET TEMPLATE SETTINGS
 ------------------------------------------------
-local function GetTemplateSettings()
+function GetTemplateSettings()
     local profile = GetProfile()
     local template = RaidCooldownsDB.settings.template
 
@@ -1779,7 +2085,7 @@ local BAR_TEMPLATE_ORDER = {
 
 
 
-local function GetSpellTextOffsets()
+function GetSpellTextOffsets()
     local s = RaidCooldownsDB.settings or {}
     return s.spellTextOffsetX or 0, s.spellTextOffsetY or 0
 end
@@ -1788,7 +2094,7 @@ end
 ------------------------------------------------
 -- SECTION SEPARATOR (RIGHT COLUMN)
 ------------------------------------------------
-local function CreateSectionSeparator(parent)
+function CreateSectionSeparator(parent)
     local sep = CreateFrame("Frame", nil, parent)
     sep:SetSize(COLUMN_WIDTH - 24, 1)
 
@@ -1802,7 +2108,7 @@ end
 ------------------------------------------------
 -- ⭐ NORMALIZED SECTION HEADER
 ------------------------------------------------
-local function CreateSection(parent, text, width)
+function CreateSection(parent, text, width)
 
     local title = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetText("|cffffcc00"..text.."|r")
@@ -1832,7 +2138,7 @@ end
 ------------------------------------------------
 -- ⭐ STANDARD CARD DROPDOWN (FINAL / SAFE)
 ------------------------------------------------
-local function CreateCardDropdown(card, labelText, yOffset)
+function CreateCardDropdown(card, labelText, yOffset)
 
     local label = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     label:SetText(labelText)
@@ -1861,7 +2167,7 @@ end
 ------------------------------------------------
 -- NORMALIZE SLIDER
 ------------------------------------------------
-local function NormalizeSlider(slider)
+function NormalizeSlider(slider)
     if not slider then return end
 
     -- Core size
@@ -1897,7 +2203,7 @@ end
 ------------------------------------------------
 -- CHECKBOX NORMALIZATION (FIX STRETCHING)
 ------------------------------------------------
-local function NormalizeCheckButton(cb)
+function NormalizeCheckButton(cb)
     if not cb then return end
 
     cb:SetWidth(24)
@@ -1916,12 +2222,12 @@ end
 ------------------------------------------------
 -- ADD SLIDER VALUE TEXT
 ------------------------------------------------
-local function AddSliderValueText(slider)
+function AddSliderValueText(slider)
     if slider.ValueText then return end
 
     local valueText = slider:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     valueText:SetJustifyH("CENTER")
-    valueText:SetTextColor(1, 0.82, 0)
+    RC_SetTextColor(valueText, 1, 0.82, 0)
 
     -- 🔽 DIRECTLY UNDER THE SLIDER BAR
     valueText:SetPoint("TOP", slider, "BOTTOM", 0, -8)
@@ -1943,7 +2249,7 @@ end
 ------------------------------------------------
 -- GET AVAILABLE CARD HEIGHT
 ------------------------------------------------
-local function GetAvailableCardHeight()
+function GetAvailableCardHeight()
     local paddingTop    = 80   -- header + margins
     local paddingBottom = 32   -- window bottom padding
 
@@ -1958,7 +2264,7 @@ end
 ------------------------------------------------
 -- PAGE LOGO (REUSABLE)
 ------------------------------------------------
-local function AddPageLogo(parent)
+function AddPageLogo(parent)
 
     if not parent then return end
 
@@ -1967,11 +2273,18 @@ local function AddPageLogo(parent)
 
     logo:SetSize(80, 80) -- adjust size here
 
-    logo:SetPoint("TOP", parent, "TOP", 0, 22)
-	
-	logo:SetAlpha(0.60)
-logo:SetDrawLayer("BACKGROUND")
+    -- Position the logo centered in the gap between the two columns (COLUMN_WIDTH + COLUMN_GAP/2).
+    -- Fallback to true center if those globals aren't available yet.
+    logo:ClearAllPoints()
+    if COLUMN_WIDTH and COLUMN_GAP then
+        local gapCenterX = COLUMN_WIDTH + (COLUMN_GAP / 2)
+        logo:SetPoint("TOP", parent, "TOPLEFT", gapCenterX, 22)
+    else
+        logo:SetPoint("TOP", parent, "TOP", 0, 22)
+    end
 
+    logo:SetAlpha(0.60)
+    logo:SetDrawLayer("OVERLAY")
 
     return logo
 end
@@ -1979,7 +2292,7 @@ end
 ------------------------------------------------
 -- TRACKING PAGE 
 ------------------------------------------------
-local function BuildTrackingPage()
+function BuildTrackingPage()
 
 trackingCenterWrap = CreateFrame("Frame", nil, Pages["Tracking"])
 trackingCenterWrap:SetPoint("TOPLEFT", content, "TOPLEFT", 150 + 16, 20)
@@ -1994,8 +2307,8 @@ local displayTitle, displaySep =
         (COLUMN_WIDTH * 2) + COLUMN_GAP
     )
 
-displayTitle:SetPoint("TOP", trackingCenterWrap, "TOP", 0, -8)
-displaySep:SetPoint("TOP", displayTitle, "BOTTOM", 0, -6)
+displayTitle:SetPoint("TOP", trackingCenterWrap, "TOP", 0, -50)
+displaySep:SetPoint("TOP", displayTitle, "BOTTOM", 0, -8)
 
 trackingOptionsCard = CreateCard(
     trackingCenterWrap,
@@ -2024,6 +2337,36 @@ end)
 
 
 trackingOptionsCard:Add(shortNamesCB, 14)
+
+
+-- Enable/Disable All (Tracked Spells)
+local enableAllBtn = CreateFrame("Button", nil, trackingOptionsCard, "UIPanelButtonTemplate")
+enableAllBtn:SetSize(120, 22)
+enableAllBtn:SetText("Enable All")
+enableAllBtn:SetScript("OnClick", function()
+    -- Checked spells are stored as nil; unchecked as false
+    wipe(RaidCooldownsDB.trackedSpells)
+    UpdateLayout()
+    BuildTrackingUI()
+end)
+
+local disableAllBtn = CreateFrame("Button", nil, trackingOptionsCard, "UIPanelButtonTemplate")
+disableAllBtn:SetSize(120, 22)
+disableAllBtn:SetText("Disable All")
+disableAllBtn:SetScript("OnClick", function()
+    wipe(RaidCooldownsDB.trackedSpells)
+    for spellID, _ in pairs(HEALING_COOLDOWNS or {}) do
+        if type(spellID) == "number" then
+            RaidCooldownsDB.trackedSpells[spellID] = false
+        end
+    end
+    UpdateLayout()
+    BuildTrackingUI()
+end)
+
+-- Place buttons under the checkbox, side-by-side
+enableAllBtn:SetPoint("TOPLEFT", shortNamesCB, "BOTTOMLEFT", 0, -10)
+disableAllBtn:SetPoint("LEFT", enableAllBtn, "RIGHT", 10, 0)
 
 
 -- LEFT COLUMN
@@ -2098,7 +2441,7 @@ end
 ------------------------------------------------
 -- CREATE COLUMN WRAPPERS 
 ------------------------------------------------
-local function BuildLayoutPage()
+function BuildLayoutPage()
 
 -- Layout page columns
 centerWrap = CreateFrame("Frame", nil, Pages["Layout"])
@@ -2196,7 +2539,7 @@ end
 ------------------------------------------------
 -- CREATE COLOR SETTING BUTTON 
 ------------------------------------------------
-local function CreateColorSettingRow(parent, labelText, getColor, setColor)
+function CreateColorSettingRow(parent, labelText, getColor, setColor)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(22)
 
@@ -2279,7 +2622,7 @@ end
 ------------------------------------------------
 -- LAYOUT SLIDERS
 ------------------------------------------------
-local function BuildLayoutSliders()
+function BuildLayoutSliders()
   -- Bar Settings
 local barTitle, barSep = CreateSection(leftColumn, "Bar Settings", COLUMN_WIDTH)
 
@@ -2292,7 +2635,7 @@ layoutCard:SetHeight(620)
 local barWidth = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 barWidth:SetMinMaxValues(120, 320)
 barWidth:SetValueStep(5)
-barWidth:SetValue(RaidCooldownsDB.settings.barWidth)
+barWidth:SetValue(tonumber(RaidCooldownsDB.settings.barWidth) or DEFAULT_SETTINGS.barWidth or 180)
 barWidth:SetHeight(18)
 NormalizeSlider(barWidth)
 barWidth.Text:SetText("Bar Width")
@@ -2313,7 +2656,7 @@ end)
 local barHeight = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 barHeight:SetMinMaxValues(12, 40)
 barHeight:SetValueStep(1)
-barHeight:SetValue(RaidCooldownsDB.settings.barHeight)
+barHeight:SetValue(tonumber(RaidCooldownsDB.settings.barHeight) or DEFAULT_SETTINGS.barHeight or 18)
 barHeight:SetHeight(18)
 NormalizeSlider(barHeight)
 barHeight.Text:SetText("Bar Height")
@@ -2334,7 +2677,7 @@ end)
 local barSpacing = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 barSpacing:SetMinMaxValues(2, 20)
 barSpacing:SetValueStep(1)
-barSpacing:SetValue(RaidCooldownsDB.settings.barSpacing)
+barSpacing:SetValue(tonumber(RaidCooldownsDB.settings.barSpacing) or DEFAULT_SETTINGS.barSpacing or 6)
 barSpacing:SetHeight(18)
 NormalizeSlider(barSpacing)
 barSpacing.Text:SetText("Bar Spacing")
@@ -2354,7 +2697,7 @@ end)
 local spellTextX = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 spellTextX:SetMinMaxValues(-50, 50)
 spellTextX:SetValueStep(1)
-spellTextX:SetValue(RaidCooldownsDB.settings.spellTextOffsetX)
+spellTextX:SetValue(tonumber(RaidCooldownsDB.settings.spellTextOffsetX) or DEFAULT_SETTINGS.spellTextOffsetX or 0)
 spellTextX:SetHeight(18)
 NormalizeSlider(spellTextX)
 spellTextX.Text:SetText("Name X")
@@ -2374,7 +2717,7 @@ end)
 local spellTextY = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 spellTextY:SetMinMaxValues(-20, 20)
 spellTextY:SetValueStep(1)
-spellTextY:SetValue(RaidCooldownsDB.settings.spellTextOffsetY)
+spellTextY:SetValue(tonumber(RaidCooldownsDB.settings.spellTextOffsetY) or DEFAULT_SETTINGS.spellTextOffsetY or 0)
 spellTextY:SetHeight(18)
 NormalizeSlider(spellTextY)
 spellTextY.Text:SetText("Name Y")
@@ -2394,7 +2737,7 @@ end)
 local spellTextSize = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 spellTextSize:SetMinMaxValues(8, 24)
 spellTextSize:SetValueStep(1)
-spellTextSize:SetValue(RaidCooldownsDB.settings.spellTextSize)
+spellTextSize:SetValue(tonumber(RaidCooldownsDB.settings.spellTextSize) or DEFAULT_SETTINGS.spellTextSize or 12)
 spellTextSize:SetHeight(18)
 NormalizeSlider(spellTextSize)
 spellTextSize.Text:SetText("Name Size")
@@ -2414,7 +2757,7 @@ end)
 local cdTextX = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 cdTextX:SetMinMaxValues(-50, 50)
 cdTextX:SetValueStep(1)
-cdTextX:SetValue(RaidCooldownsDB.settings.cdTextOffsetX)
+cdTextX:SetValue(tonumber(RaidCooldownsDB.settings.cdTextOffsetX) or DEFAULT_SETTINGS.cdTextOffsetX or 0)
 cdTextX:SetHeight(18)
 NormalizeSlider(cdTextX)
 cdTextX.Text:SetText("Cooldown X")
@@ -2434,7 +2777,7 @@ end)
 local cdTextY = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 cdTextY:SetMinMaxValues(-20, 20)
 cdTextY:SetValueStep(1)
-cdTextY:SetValue(RaidCooldownsDB.settings.cdTextOffsetY)
+cdTextY:SetValue(tonumber(RaidCooldownsDB.settings.cdTextOffsetY) or DEFAULT_SETTINGS.cdTextOffsetY or 0)
 cdTextY:SetHeight(18)
 NormalizeSlider(cdTextY)
 cdTextY.Text:SetText("Cooldown Y")
@@ -2454,7 +2797,7 @@ end)
 local cdTextSize = CreateFrame("Slider", nil, layoutCard, "OptionsSliderTemplate")
 cdTextSize:SetMinMaxValues(8, 24)
 cdTextSize:SetValueStep(1)
-cdTextSize:SetValue(RaidCooldownsDB.settings.cdTextSize)
+cdTextSize:SetValue(tonumber(RaidCooldownsDB.settings.cdTextSize) or DEFAULT_SETTINGS.cdTextSize or 12)
 cdTextSize:SetHeight(18)
 NormalizeSlider(cdTextSize)
 cdTextSize.Text:SetText("Cooldown Size")
@@ -2495,7 +2838,7 @@ DistributeSlidersEvenly(layoutCard, layoutSliders)
 ------------------------------------------------
 -- CLAMP CARD HEIGHT
 ------------------------------------------------
-local function ClampCardHeight(card)
+function ClampCardHeight(card)
     local maxH = options:GetHeight() - 180
     if card:GetHeight() > maxH then
         card:SetHeight(maxH)
@@ -2516,7 +2859,7 @@ end
 ------------------------------------------------
 -- RIGHT COLUMN SECTION WRAPPER
 
-local function CreateRightSection(width)
+function CreateRightSection(width)
     local card = CreateCard(rightColumn, nil, width or 260)
     return card
 end
@@ -2609,7 +2952,7 @@ end
 ------------------------------------------------
 -- COLOR PICKERS (Bar Style)
 ------------------------------------------------
-local function EnsureColorDefaults()
+function EnsureColorDefaults()
     RaidCooldownsDB.settings.spellNameColor = RaidCooldownsDB.settings.spellNameColor or { r=1, g=1, b=1, a=1 }
     RaidCooldownsDB.settings.cdTextColor    = RaidCooldownsDB.settings.cdTextColor    or { r=1, g=0.82, b=0, a=1 }
 end
@@ -2624,7 +2967,10 @@ local nameRow = CreateColorSettingRow(
         return n.r, n.g, n.b, n.a
     end,
     function(r,g,b,a)
-        RaidCooldownsDB.settings.spellNameColor = { r=r, g=g, b=b, a=a }
+        local p = GetProfile()
+        p.settings = p.settings or {}
+        p.settings.spellNameColor = { r=r, g=g, b=b, a=a }
+        RaidCooldownsDB.settings.spellNameColor = p.settings.spellNameColor
         UpdateLayout()
     end
 )
@@ -2638,7 +2984,10 @@ local cdRow = CreateColorSettingRow(
         return c.r, c.g, c.b, c.a
     end,
     function(r,g,b,a)
-        RaidCooldownsDB.settings.cdTextColor = { r=r, g=g, b=b, a=a }
+        local p = GetProfile()
+        p.settings = p.settings or {}
+        p.settings.cdTextColor = { r=r, g=g, b=b, a=a }
+        RaidCooldownsDB.settings.cdTextColor = p.settings.cdTextColor
         UpdateLayout()
     end
 )
@@ -2789,6 +3138,8 @@ lock:SetScript("OnClick", function(self)
     RC.locked = self:GetChecked()
     UpdatePanelMouseState()
     UpdatePanelBackground()
+
+        -- Register combat log tracking (safe to defer if in combat)
     UpdateBarMouseState()
 end)
 
@@ -2801,7 +3152,7 @@ local testBtn = CreateFrame("CheckButton", nil, controlsCard, "InterfaceOptionsC
 NormalizeCheckButton(testBtn)
 testBtn.Text:SetText("Test Mode")
 testBtn.Text:SetFontObject("GameFontNormal")
-testBtn.Text:SetTextColor(1, 1, 1)
+RC_SetTextColor(testBtn.Text, 1, 1, 1)
 testBtn:SetChecked(RC.testMode)
 
 testBtn:SetScript("OnClick", function(self)
@@ -2852,6 +3203,7 @@ testBtn:SetScript("OnClick", function(self)
 
         -- Return to real entries
         UpdateOwners()
+        RegisterSpellcastUnits()
         PreCreateAllBars()
         RebuildOrderedList()
     end
@@ -3053,7 +3405,7 @@ end
 ------------------------------------------------
 -- REFRESH PROFILE UI 
 ------------------------------------------------
-local function RefreshProfileUI()
+function RefreshProfileUI()
 
     -- Refresh active profile dropdown
     if profileDrop then
@@ -3086,7 +3438,7 @@ end
 ------------------------------------------------
 -- SHOW COLOR PICKER 
 ------------------------------------------------
-local function ShowColorPickerCompat(r, g, b, a, onChanged, onCancel)
+function ShowColorPickerCompat(r, g, b, a, onChanged, onCancel)
     a = a or 1
 
     -- Modern API (Retail)
@@ -3280,6 +3632,10 @@ Pages["Tracking"] = CreateFrame("Frame", nil, content)
 Pages["Tracking"]:SetAllPoints()
 Pages["Tracking"]:Hide()
 
+Pages["Spells"] = CreateFrame("Frame", nil, content)
+Pages["Spells"]:SetAllPoints()
+Pages["Spells"]:Hide()
+
 
 
 Pages["About"] = CreateFrame("Frame", nil, content)
@@ -3327,7 +3683,7 @@ html:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -12, 12)
 -- Bigger fonts for About page
 local AboutBodyFont = CreateFont("RaidCooldownsAboutBodyFont")
 AboutBodyFont:SetFont("Fonts\\FRIZQT__.TTF", 15, "")  -- FIX: flags must be a string
-AboutBodyFont:SetTextColor(1, 1, 1)
+RC_SetTextColor(AboutBodyFont, 1, 1, 1)
 
 local AboutH1Font = CreateFont("RaidCooldownsAboutH1Font")
 AboutH1Font:SetFont("Fonts\\FRIZQT__.TTF", 18, "OUTLINE")
@@ -3355,7 +3711,7 @@ AboutH2Font:SetFont("Fonts\\FRIZQT__.TTF", 16, "OUTLINE")
     local aboutHTML =
         "<html><body>" ..
         "<h1></h1>" ..
-        "<p>RaidCooldowns is a lightweight raid utility that tracks</p>" ..
+        "<p>|cff00c6ffRaid|r|cffffcc00Cooldowns|r is a lightweight raid utility that tracks</p>" ..
 		"<p>major defensive and utility cooldowns for your group  </p>" .. 
 		"<p>or raid in a clean, easy-to-read bar list.</p>" ..
 		"<p></p>" ..
@@ -3369,7 +3725,17 @@ AboutH2Font:SetFont("Fonts\\FRIZQT__.TTF", 16, "OUTLINE")
         "- Drag bars to reorder them to your preferred priority.<br/>" ..
         "- Customize layout, text, and colors in the Options panel.</p>" ..
     "<p></p>" ..
-"<p></p>" ..
+"<p></p>" ..		"<p></p>" ..
+		"<h2>Client Plugin</h2>" ..
+		"<p></p>" ..
+		"<p>If you do not want to run the full tracker,</p>" ..
+		"<p>you can install |cff00c6ffRaid|r|cffffcc00Cooldowns|r|cffffd100_ClientPlugin|r instead.</p>" ..
+		"<p>It quietly sends your cooldown casts to</p>" ..
+		"<p>anyone running the tracker (no chat spam).</p>" ..
+		"<p>In the tracker options, use the |cffffd100Client Plugin|r tab</p>" ..
+		"<p>to scan for senders.</p>" ..
+		"<p></p>" ..
+
 	"<p>Created by Valszone<br/>" ..
 ' <a href="url:https://twitch.tv/valszone">|cff3399fftwitch.tv/valszone|r</a></p>' ..
         "</body></html>"
@@ -3437,11 +3803,13 @@ end
 local btnLayout   = CreateSidebarButton("Layout", sbTitle)
 local btnProfiles = CreateSidebarButton("Profiles", btnLayout)
 local btnTracking = CreateSidebarButton("Tracking", btnProfiles)
-local btnAbout    = CreateSidebarButton("About", btnTracking)
+local btnSpells   = CreateSidebarButton("Client Plugin", btnTracking)
+local btnAbout    = CreateSidebarButton("About", btnSpells)
 
 btnLayout:SetScript("OnClick", function() ShowPage("Layout") end)
 btnProfiles:SetScript("OnClick", function() ShowPage("Profiles") end)
 btnTracking:SetScript("OnClick", function() ShowPage("Tracking") end)
+btnSpells:SetScript("OnClick", function() ShowPage("Spells") end)
 btnAbout:SetScript("OnClick", function() ShowPage("About") end)
 
 if pageName == "About" then
@@ -3678,6 +4046,15 @@ end
 local function CooldownOnUpdate(self, elapsed)
     local now = GetTime()
 
+    -- CD text color from settings (do not overwrite with hardcoded colors)
+    local s = RaidCooldownsDB and RaidCooldownsDB.settings
+    local c = s and s.cdTextColor
+    local cr = (c and c.r) or 1
+    local cg = (c and c.g) or 1
+    local cb = (c and c.b) or 1
+    local ca = (c and c.a) or 1
+
+
     for _, entry in ipairs(GetVisibleOrdered()) do
         local bar = entry.bar
 
@@ -3689,16 +4066,16 @@ local function CooldownOnUpdate(self, elapsed)
                     entry.onCooldown = false
                     bar.fill:SetValue(1)
                     bar.cdText:SetText("READY")
-                    bar.cdText:SetTextColor(0, 1, 0)
+                    RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
                 else
                     bar.fill:SetValue(remaining / (entry.cooldownDuration or 1))
                     bar.cdText:SetText(FormatTime(remaining))
-                    bar.cdText:SetTextColor(1, 1, 1)
+                    RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
                 end
             else
                 bar.fill:SetValue(1)
                 bar.cdText:SetText("READY")
-                bar.cdText:SetTextColor(0, 1, 0)
+                RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
             end
 
             bar.cdText:Show()
@@ -3708,8 +4085,8 @@ end
 
 panel:SetScript("OnUpdate", function(self, elapsed)
     if RC.dragging then
-        UpdateDragPreview()         -- compute targets / may relayout
-          end
+        UpdateDragPreview() -- compute targets / may relayout
+    end
     CooldownOnUpdate(self, elapsed)
 end)
 
@@ -3867,7 +4244,7 @@ end
 ------------------------------------------------
 -- IS SPELL TRACKED (PROFILE SAFE / DIRECT)
 ------------------------------------------------
-function IsSpellTracked(spellID)
+IsSpellTracked = function(spellID)
     local t = RaidCooldownsDB.trackedSpells
     if not t then
         return true -- default: tracked
@@ -3965,6 +4342,7 @@ function UpdateGroupCooldown(group)
     group.cooldownEnd      = start + duration
     group.onCooldown       = true
 end
+
 
 
 
@@ -4209,13 +4587,28 @@ PreCreateAllBars = function()
             bar.label = bar:CreateFontString(nil, "OVERLAY")
             bar.label:SetDrawLayer("OVERLAY", 7)
             bar.label:SetFont(font, RaidCooldownsDB.settings.spellTextSize or 12, "OUTLINE")
-            bar.label:SetTextColor(1, 1, 1)
+            local s = RaidCooldownsDB and RaidCooldownsDB.settings or {}
+            s.spellNameColor = s.spellNameColor or {}
+            s.cdTextColor    = s.cdTextColor    or {}
+            local n = s.spellNameColor
+            local c = s.cdTextColor
+            local nr = tonumber(n.r) or 1
+            local ng = tonumber(n.g) or 1
+            local nb = tonumber(n.b) or 1
+            local na = tonumber(n.a) or 1
+            local cr = tonumber(c.r) or 1
+            local cg = tonumber(c.g) or 0.82
+            local cb = tonumber(c.b) or 0
+            local ca = tonumber(c.a) or 1
+            n.r, n.g, n.b, n.a = nr, ng, nb, na
+            c.r, c.g, c.b, c.a = cr, cg, cb, ca
+            RC_SetTextColor(bar.label, nr, ng, nb, na)
             bar.label:SetJustifyH("LEFT")
             bar.label:SetJustifyV("MIDDLE")
 
             bar.cdText = bar:CreateFontString(nil, "OVERLAY")
             bar.cdText:SetFont(font, RaidCooldownsDB.settings.cdTextSize or 12, "OUTLINE")
-            bar.cdText:SetTextColor(1, 1, 1)
+            RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
             bar.cdText:SetDrawLayer("OVERLAY", 8)
 
             -- bind
@@ -4451,27 +4844,41 @@ RC.dragTargetRow = nil
 RebuildOrderedList()
 UpdateLayout()
 end
+
+local function NormalizeColor(t, dr, dg, db, da)
+    if type(t) ~= "table" then t = {} end
+    local r = tonumber(t.r) or dr
+    local g = tonumber(t.g) or dg
+    local b = tonumber(t.b) or db
+    local a = tonumber(t.a) or da
+    t.r, t.g, t.b, t.a = r, g, b, a
+    return t, r, g, b, a
+end
+
 local function ApplyConfiguredTextColors(bar)
     if not bar or not RaidCooldownsDB or not RaidCooldownsDB.settings then return end
     local s = RaidCooldownsDB.settings
-    s.spellNameColor = s.spellNameColor or { r=1, g=1, b=1, a=1 }
-    s.cdTextColor    = s.cdTextColor    or { r=1, g=0.82, b=0, a=1 }
 
-    local n = s.spellNameColor
+    -- Normalize (fixes cases where tables exist but are empty: {})
+    local n; local nr,ng,nb,na
+    local c; local cr,cg,cb,ca
+
+    s.spellNameColor, nr,ng,nb,na = NormalizeColor(s.spellNameColor, 1, 1, 1, 1)
+    s.cdTextColor,    cr,cg,cb,ca = NormalizeColor(s.cdTextColor,    1, 0.82, 0, 1)
+
     if bar.label then
-        bar.label:SetTextColor(n.r, n.g, n.b, n.a or 1)
+        RC_SetTextColor(bar.label, nr, ng, nb, na)
     end
 
     if bar.cdText then
-        local c = s.cdTextColor
-        bar.cdText:SetTextColor(c.r, c.g, c.b, c.a or 1)
+        RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
     end
 end
 
 ------------------------------------------------
 -- UPDATE DEATH VISUAL
 ------------------------------------------------
-local function UpdateDeathVisual(entry)
+UpdateDeathVisual = function(entry)
 
     local bar = entry.bar
     if not bar then return end
@@ -4481,10 +4888,10 @@ local function UpdateDeathVisual(entry)
         bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
         bar.icon:SetVertexColor(0.4, 0.4, 0.4)
         if bar.label then
-            bar.label:SetTextColor(0.6, 0.6, 0.6)
+            RC_SetTextColor(bar.label, 0.6, 0.6, 0.6)
         end
         if bar.cdText then
-            bar.cdText:SetTextColor(0.6, 0.6, 0.6)
+            RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
         end
     else
         -- Restore visuals
@@ -4530,17 +4937,16 @@ local function ResetBarVisuals(bar, entry)
         bar.cdText:SetFont(font, s.cdTextSize or 12, "OUTLINE")
     end
 	
-	-- Ensure defaults exist even if DB wasn't initialized yet
-RaidCooldownsDB.settings.spellNameColor = RaidCooldownsDB.settings.spellNameColor or { r=1, g=1, b=1, a=1 }
-RaidCooldownsDB.settings.cdTextColor    = RaidCooldownsDB.settings.cdTextColor    or { r=1, g=0.82, b=0, a=1 }
+	    -- Text colors (safe / compatible across clients)
+    s.spellNameColor = s.spellNameColor or { r = 1, g = 1, b = 1, a = 1 }
+    s.cdTextColor    = s.cdTextColor    or { r = 1, g = 0.82, b = 0, a = 1 }
 
-local n = RaidCooldownsDB.settings.spellNameColor
-bar.label:SetTextColor(n.r, n.g, n.b, n.a or 1)
+    RC_SetTextColor(bar.label, s.spellNameColor)
+    if bar.cdText then
+        RC_SetTextColor(bar.cdText, s.cdTextColor)
+    end
 
-local c = RaidCooldownsDB.settings.cdTextColor
-bar.cdText:SetTextColor(c.r, c.g, c.b, c.a or 1)
-
-    ------------------------------------------------
+------------------------------------------------
     -- POSITION SPELL NAME
     ------------------------------------------------
     local sx = s.spellTextOffsetX or 0
@@ -4835,8 +5241,9 @@ LayoutHandlers.COLUMN_LIST = function()
     local barWidth = s.barWidth
     local rowSize  = math.max(1, (s.barHeight or 18) + (s.barSpacing or 0))
 
-    -- How many columns the user configured (we KEEP this)
+    -- How many columns the user configured (we KEEP this as the saved column space)
     local wantedCols = tonumber(RaidCooldownsDB.settings.columns) or 3
+    if wantedCols < 1 then wantedCols = 1 end
 
     -- How many columns can physically fit (we only RENDER this many)
     local panelW      = (panel and panel:GetWidth()) or 0
@@ -4845,6 +5252,7 @@ LayoutHandlers.COLUMN_LIST = function()
     if fitCols < 1 then fitCols = 1 end
 
     local renderCols = math.min(wantedCols, fitCols)
+    if renderCols < 1 then renderCols = 1 end
 
     -- center only the rendered columns
     local totalWidth = (renderCols * barWidth) + ((renderCols - 1) * colGap)
@@ -4853,14 +5261,22 @@ LayoutHandlers.COLUMN_LIST = function()
         startX = leftPadding + (usableWidth - totalWidth) / 2
     end
 
-    -- group visible list by the SAVED column (do NOT clamp to renderCols)
+    -- IMPORTANT:
+    -- We keep entry.column as the SAVED column (1..wantedCols),
+    -- but for DISPLAY we clamp any hidden-column entries into the last visible column
     local columns = {}
-    for i = 1, wantedCols do columns[i] = {} end
+    for i = 1, renderCols do columns[i] = {} end
 
-    for _, entry in ipairs(GetVisibleOrdered() or {}) do
-        local col = tonumber(entry.column) or 1
-        if col < 1 or col > wantedCols then col = 1 end
-        table.insert(columns[col], entry)
+    local visible = GetVisibleOrdered() or {}
+    for _, entry in ipairs(visible) do
+        local savedCol = tonumber(entry.column) or 1
+        if savedCol < 1 or savedCol > wantedCols then savedCol = 1 end
+
+        local displayCol = savedCol
+        if displayCol > renderCols then displayCol = renderCols end
+
+        -- columns[displayCol] is guaranteed to exist (1..renderCols)
+        table.insert(columns[displayCol], entry)
     end
 
     local targetCol = RC.dragTargetColumn
@@ -4870,73 +5286,66 @@ LayoutHandlers.COLUMN_LIST = function()
 
     if RC.gapFrame then RC.gapFrame:Hide() end
 
-    -- render columns that fit; hide columns that don't
-    for col = 1, wantedCols do
-        if col > renderCols then
-            -- hide everything in hidden columns
-            for _, entry in ipairs(columns[col]) do
-                if entry.bar then entry.bar:Hide() end
-            end
-        else
-            local x = startX + (col - 1) * (barWidth + colGap)
+    -- render only columns that fit (everything is already mapped into 1..renderCols)
+    for col = 1, renderCols do
+        local x = startX + (col - 1) * (barWidth + colGap)
 
-            local slot = 0
-            for _, entry in ipairs(columns[col]) do
-                slot = slot + 1
+        local slot = 0
+        for _, entry in ipairs(columns[col]) do
+            slot = slot + 1
 
-                if RC.dragging and RC.draggingEntry and entry == RC.draggingEntry then
-                    -- cursor-follow owns it
-                else
-                    local bar = entry.bar
-                    if bar then
-                        local shift = 0
-                        if RC.dragging and targetCol == col and targetRow then
-                            if slot >= targetRow then shift = 1 end
-                        end
+            if RC.dragging and RC.draggingEntry and entry == RC.draggingEntry then
+                -- cursor-follow owns it
+            else
+                local bar = entry.bar
+                if bar then
+                    local shift = 0
+                    if RC.dragging and targetCol == col and targetRow then
+                        if slot >= targetRow then shift = 1 end
+                    end
 
-                        ResetBarVisuals(bar, entry)
-                        bar:SetSize(barWidth, s.barHeight)
+                    ResetBarVisuals(bar, entry)
+                    bar:SetSize(barWidth, s.barHeight)
 
-                        -- ICON + BAR geometry (same as your existing handler)
-                        bar.icon:Show(); bar.fill:Show(); bar.label:Show()
-                        if bar.cdText then bar.cdText:Show() end
+                    -- ICON + BAR geometry (same as your existing handler)
+                    bar.icon:Show(); bar.fill:Show(); bar.label:Show()
+                    if bar.cdText then bar.cdText:Show() end
 
-                        bar.icon:SetSize(s.barHeight, s.barHeight)
-                        bar.icon:ClearAllPoints()
-                        bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
+                    bar.icon:SetSize(s.barHeight, s.barHeight)
+                    bar.icon:ClearAllPoints()
+                    bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
 
-                        bar.fill:ClearAllPoints()
-                        bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", ICON_GAP, 0)
-                        bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
+                    bar.fill:ClearAllPoints()
+                    bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", ICON_GAP, 0)
+                    bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
 
-                        local sx = s.spellTextOffsetX or 0
-                        local sy = s.spellTextOffsetY or 0
-                        bar.label:ClearAllPoints()
-                        bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4 + sx, sy)
-                        bar.label:SetJustifyH("LEFT")
-                        bar.label:SetJustifyV("MIDDLE")
+                    local sx = s.spellTextOffsetX or 0
+                    local sy = s.spellTextOffsetY or 0
+                    bar.label:ClearAllPoints()
+                    bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4 + sx, sy)
+                    bar.label:SetJustifyH("LEFT")
+                    bar.label:SetJustifyV("MIDDLE")
 
-                        if bar.cdText then
-                            local cx = s.cdTextOffsetX or 0
-                            local cy = s.cdTextOffsetY or 0
-                            bar.cdText:SetJustifyH("RIGHT")
-                            bar.cdText:SetJustifyV("MIDDLE")
-                            bar.cdText:ClearAllPoints()
-                            bar.cdText:SetPoint("RIGHT", bar, "RIGHT", -4 + cx, cy)
-                        end
+                    if bar.cdText then
+                        local cx = s.cdTextOffsetX or 0
+                        local cy = s.cdTextOffsetY or 0
+                        bar.cdText:SetJustifyH("RIGHT")
+                        bar.cdText:SetJustifyV("MIDDLE")
+                        bar.cdText:ClearAllPoints()
+                        bar.cdText:SetPoint("RIGHT", bar, "RIGHT", -4 + cx, cy)
+                    end
 
-                        bar.label:SetText(GetBarLabelText(entry))
+                    bar.label:SetText(GetBarLabelText(entry))
 
-                        local y = paddingTop - ((slot - 1 + shift) * rowSize)
+                    local y = paddingTop - ((slot - 1 + shift) * rowSize)
 
-                        -- pass explicit padding so it doesn't get hidden at the top
-                        if (not RC.dragging) and (not IsWithinPanelUniversal(y, s.barHeight, 16, 16)) then
-                            bar:Hide()
-                        else
-                            bar:ClearAllPoints()
-                            bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
-                            bar:Show()
-                        end
+                    -- pass explicit padding so it doesn't get hidden at the top
+                    if (not RC.dragging) and (not IsWithinPanelUniversal(y, s.barHeight, 16, 16)) then
+                        bar:Hide()
+                    else
+                        bar:ClearAllPoints()
+                        bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
+                        bar:Show()
                     end
                 end
             end
@@ -5485,6 +5894,7 @@ newProfileBtn:SetScript("OnClick", function()
 
 CreateGroups()
 UpdateOwners()
+        RegisterSpellcastUnits()
 RebuildOrderedList()
 RefreshProfileUI()
 UIDropDownMenu_SetText(profileDrop, name)
@@ -5513,6 +5923,7 @@ dupBtn:SetScript("OnClick", function()
 
 CreateGroups()
 UpdateOwners()
+        RegisterSpellcastUnits()
 RebuildOrderedList()
 
 UIDropDownMenu_SetText(profileDrop, name)
@@ -5544,6 +5955,7 @@ deleteBtn:SetScript("OnClick", function()
 
 CreateGroups()
 UpdateOwners()
+        RegisterSpellcastUnits()
 RebuildOrderedList()
 
 UIDropDownMenu_SetText(profileDrop, "Default")
@@ -5632,7 +6044,7 @@ local profileLabel = activeProfileCard.profileLabel
 profileLabel:SetJustifyH("CENTER")
 profileLabel:SetWidth(COLUMN_WIDTH)
 
-profileLabel:SetTextColor(1,0.82,0)
+RC_SetTextColor(profileLabel, 1,0.82,0)
 
 
 
@@ -5686,14 +6098,30 @@ if name == "Profiles" then
 if name == "About" then
     BuildAboutPage()
 end
-
   if name == "Tracking" then
     if not RC.trackingBuilt then
         BuildTrackingPage()
         RC.trackingBuilt = true
     end
     BuildTrackingUI()
-end
+  end
+
+  if name == "Spells" then
+    local page = Pages["Spells"]
+    -- Ensure shared Tracking UI/state is initialized even if Spells is opened first
+    if not RC.trackingBuilt then
+        BuildTrackingPage()
+        RC.trackingBuilt = true
+    end
+    BuildTrackingUI()
+    if not (SenderPage and SenderPage.built) then
+      BuildSenderSpellsPage()
+    else
+      RefreshSenderSpellsPage()
+      RefreshSenderList()
+    end
+  end
+
 end
 
 
@@ -5901,6 +6329,7 @@ function RaidCooldowns_ImportProfileFromText(text)
 
 CreateGroups()
 UpdateOwners()
+        RegisterSpellcastUnits()
 RebuildOrderedList()
 PreCreateAllBars()
 
@@ -6020,23 +6449,23 @@ fs:SetJustifyH("CENTER")
 fs:SetJustifyV("MIDDLE")
 fs:SetWordWrap(false)
 fs:SetWidth(btn:GetWidth() - 20)
-fs:SetTextColor(1, 1, 1)
+RC_SetTextColor(fs, 1, 1, 1)
 
 
 -- 🟢 Spec Override Active
 if assignedProfile and assignedProfile == currentProfile then
     btn:SetAlpha(1)
-    fs:SetTextColor(0.2, 1, 0.2)
+    RC_SetTextColor(fs, 0.2, 1, 0.2)
 
 -- 🟡 Role Fallback Active
 elseif (not assignedProfile) and roleProfile and roleProfile == currentProfile then
     btn:SetAlpha(1)
-    fs:SetTextColor(1, 0.85, 0)
+    RC_SetTextColor(fs, 1, 0.85, 0)
 
 -- ⚪ Manual / Inactive
 else
     btn:SetAlpha(0.85)
-    fs:SetTextColor(1, 1, 1)
+    RC_SetTextColor(fs, 1, 1, 1)
 end
 
 
@@ -6115,22 +6544,22 @@ function UpdateSpecButtonStates()
         -- 🟢 Spec Override Active
         if assigned and assigned == currentProfile then
             btn:SetAlpha(1)
-            fs:SetTextColor(0.2, 1, 0.2)
+            RC_SetTextColor(fs, 0.2, 1, 0.2)
 
         -- 🟡 Role Fallback Active
         elseif (not assigned) and roleProfile and roleProfile == currentProfile then
             btn:SetAlpha(1)
-            fs:SetTextColor(1, 0.85, 0)
+            RC_SetTextColor(fs, 1, 0.85, 0)
 
         -- 🔵 Active Spec (but no override/fallback)
         elseif i == activeSpec then
             btn:SetAlpha(1)
-            fs:SetTextColor(0, 0.8, 1)
+            RC_SetTextColor(fs, 0, 0.8, 1)
 
         -- ⚪ Inactive
         else
             btn:SetAlpha(0.85)
-            fs:SetTextColor(1, 1, 1)
+            RC_SetTextColor(fs, 1, 1, 1)
         end
     end
 end
@@ -6244,6 +6673,406 @@ end
 end
 
     ------------------------------------------------
+
+------------------------------------------------
+-- SPELLS PAGE (SENDER MODE)
+------------------------------------------------
+SenderPage = SenderPage or {
+  built = false,
+  spellScroll = nil,
+  spellContent = nil,
+  spellRows = {},
+  senderScroll = nil,
+  senderContent = nil,
+  senderRows = {},
+}
+
+local function GetAllCooldownSpellsSorted_ForSender()
+  local list = {}
+  for spellID, data in pairs(HEALING_COOLDOWNS or {}) do
+    if type(spellID) == "number" and type(data) == "table" then
+      list[#list+1] = {
+        id = spellID,
+        name = data.name or ("Spell "..spellID),
+        class = data.class or "",
+        cooldown = data.cooldown or 0,
+        category = data.category or "",
+      }
+    end
+  end
+  table.sort(list, function(a,b)
+    if a.class ~= b.class then return a.class < b.class end
+    if a.category ~= b.category then return a.category < b.category end
+    return a.name < b.name
+  end)
+  return list
+end
+
+local function EnsureSenderDB()
+  RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+end
+
+local function IsSenderSpellEnabled(spellID)
+  EnsureSenderDB()
+  return RaidCooldownsDB.senderSpells[spellID] ~= false
+end
+
+local function SetSenderSpellEnabled(spellID, enabled)
+  EnsureSenderDB()
+  if enabled then
+    RaidCooldownsDB.senderSpells[spellID] = nil
+  else
+    RaidCooldownsDB.senderSpells[spellID] = false
+  end
+end
+
+local function RC_PickChannel()
+  if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+    return "INSTANCE_CHAT"
+  elseif IsInRaid() then
+    return "RAID"
+  elseif IsInGroup() then
+    return "PARTY"
+  end
+  return nil
+end
+
+local function RC_SendSenderPing()
+  local chan = RC_PickChannel()
+  if not chan then return end
+  local myHash = RC_SenderHashFromDB()
+  if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+    C_ChatInfo.SendAddonMessage(SENDER_PREFIX, "PING;1.0.0;"..myHash, chan)
+  elseif SendAddonMessage then
+    SendAddonMessage(SENDER_PREFIX, "PING;1.0.0;"..myHash, chan)
+  end
+end
+
+function RefreshSenderList()
+  if not SenderPage.built or not SenderPage.senderContent then return end
+
+  local members = {}
+  local function addUnit(unit)
+    if UnitExists(unit) then
+      local n = GetUnitName(unit, true)
+      if n and n ~= "" then
+        local base = RC_NormalizeName(n)
+        members[#members+1] = { base=base }
+      end
+    end
+  end
+
+  addUnit("player")
+  if IsInRaid() then
+    for i=1, GetNumGroupMembers() do addUnit("raid"..i) end
+  elseif IsInGroup() then
+    for i=1, GetNumSubgroupMembers() do addUnit("party"..i) end
+  end
+
+  local seen = {}
+  local uniq = {}
+  for _,m in ipairs(members) do
+    if m.base ~= "" and not seen[m.base] then
+      seen[m.base]=true
+      uniq[#uniq+1]=m
+    end
+  end
+  table.sort(uniq, function(a,b) return a.base < b.base end)
+
+  local now = RC_Now()
+  local rowH = 22
+  for i=1, #uniq do
+    local row = SenderPage.senderRows[i]
+    if not row then
+      row = CreateFrame("Frame", nil, SenderPage.senderContent)
+      row:SetHeight(rowH)
+
+      local statusFS = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      statusFS:SetPoint("LEFT", row, "LEFT", 2, 0)
+      statusFS:SetWidth(16)
+
+      local nameFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      nameFS:SetPoint("LEFT", statusFS, "RIGHT", 6, 0)
+      nameFS:SetWidth(140)
+      nameFS:SetJustifyH("LEFT")
+
+      local verFS = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+      verFS:SetPoint("LEFT", nameFS, "RIGHT", 8, 0)
+      verFS:SetWidth(70)
+      verFS:SetJustifyH("LEFT")
+
+      local hashFS = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+      hashFS:SetPoint("LEFT", verFS, "RIGHT", 8, 0)
+      hashFS:SetWidth(220)
+      hashFS:SetJustifyH("LEFT")
+
+      row.statusFS=statusFS
+      row.nameFS=nameFS
+      row.verFS=verFS
+      row.hashFS=hashFS
+      SenderPage.senderRows[i]=row
+    end
+
+    local m = uniq[i]
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", SenderPage.senderContent, "TOPLEFT", 0, -((i-1)*rowH))
+
+    local info = RC.senderSeen and RC.senderSeen[m.base]
+    local detected = false
+    local ver, hash = "-", "-"
+    if info and info.lastSeen and (now - info.lastSeen) <= 300 then
+      detected = true
+      ver = info.version or "?"
+      hash = info.hash or "?"
+    end
+
+    row.statusFS:SetText(detected and "|cff00ff00✓|r" or "|cffff3333✗|r")
+    row.nameFS:SetText(m.base)
+    row.verFS:SetText(ver)
+    row.hashFS:SetText(hash)
+    row:Show()
+  end
+
+  for i=#uniq+1, #SenderPage.senderRows do
+    SenderPage.senderRows[i]:Hide()
+  end
+
+  SenderPage.senderContent:SetHeight(math.max(#uniq*rowH, 1))
+end
+
+function RefreshSenderSpellsPage()
+  if not SenderPage.built or not SenderPage.spellContent then return end
+  -- Avoid 1-frame layout flashes: wait until scroll child has a real width
+  local w = SenderPage.spellContent:GetWidth() or 0
+  if w < 50 then
+    C_Timer.After(0, RefreshSenderSpellsPage)
+    return
+  end
+
+  local spells = GetAllCooldownSpellsSorted_ForSender()
+
+  local rowH = 20
+  local y = -4
+
+  -- Ensure DB exists
+  RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
+
+  for i=1, #spells do
+    local s = spells[i]
+    local spellID = s.id
+    local spellName = s.name
+
+    local row = SenderPage.spellRows[i]
+    if not row then
+      row = CreateFrame("Frame", nil, SenderPage.spellContent)
+      row:SetHeight(rowH)
+      row:SetPoint("LEFT", SenderPage.spellContent, "LEFT", 0, 0)
+      row:SetPoint("RIGHT", SenderPage.spellContent, "RIGHT", 0, 0)
+
+      local icon = row:CreateTexture(nil, "ARTWORK")
+      icon:SetSize(16, 16)
+      icon:SetPoint("LEFT", row, "LEFT", 4, 0)
+      row.icon = icon
+
+      local nameFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      nameFS:SetPoint("LEFT", icon, "RIGHT", 8, 0)
+      nameFS:SetJustifyH("LEFT")
+      -- Constrain text so it can never spill across the window
+      nameFS:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+      if nameFS.SetWordWrap then nameFS:SetWordWrap(false) end
+      if nameFS.SetNonSpaceWrap then nameFS:SetNonSpaceWrap(false) end
+      if nameFS.SetMaxLines then nameFS:SetMaxLines(1) end
+      row.nameFS = nameFS
+
+      SenderPage.spellRows[i] = row
+    end
+
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", SenderPage.spellContent, "TOPLEFT", 0, y)
+    row:SetPoint("TOPRIGHT", SenderPage.spellContent, "TOPRIGHT", 0, y)
+
+    -- Icon + text
+    if spellID and type(spellID) == "number" then
+      local tex = select(3, RC_GetSpellInfo(spellID))
+      if tex then row.icon:SetTexture(tex) else row.icon:SetTexture(nil) end
+    end
+
+    local enabled = (RaidCooldownsDB.trackedSpells[spellID] ~= false)
+    row.nameFS:SetText(spellName or ("Spell "..tostring(spellID)))
+
+    if enabled then
+      row.nameFS:SetTextColor(1, 0.82, 0) -- yellow-ish like your UI
+      row.icon:SetAlpha(1)
+    else
+      row.nameFS:SetTextColor(0.6, 0.6, 0.6)
+      row.icon:SetAlpha(0.35)
+    end
+
+    row:Show()
+    y = y - rowH
+  end
+
+  -- Hide extra cached rows
+  for j = #spells + 1, #SenderPage.spellRows do
+    if SenderPage.spellRows[j] then
+      SenderPage.spellRows[j]:Hide()
+    end
+  end
+
+  SenderPage.spellContent:SetHeight(math.max(1, -y + 8))
+end
+
+
+function BuildSenderSpellsPage()
+  local page = Pages["Spells"]
+  if not page then return end
+
+  if SenderPage.built then
+    page:SetAlpha(1)
+    RefreshSenderSpellsPage()
+    RefreshSenderList()
+    return
+  end
+  -- Prevent first-open flicker: build while transparent, then show next frame
+  page:SetAlpha(0)
+
+  -- Header
+  -- (Title removed per UI request)
+  local title = page:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -8)
+  title:SetText("")
+  title:Hide()
+
+  local desc = page:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  desc:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -12)
+  desc:SetJustifyH("LEFT")
+  desc:SetText("Scan your group to see who has the Client Plugin installed. This page is informational; spell selection is configured on the Tracking page.")
+
+  local scan = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
+  scan:SetSize(140, 24)
+  scan:SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 0, -8)
+  scan:SetText("Scan Senders")
+  scan:SetScript("OnClick", function()
+    RC_SendSenderPing()
+    C_Timer.After(0.5, RefreshSenderList)
+  end)
+
+  -- Content area below the button (fills to bottom of the options window)
+  local area = CreateFrame("Frame", nil, page)
+  area:SetPoint("TOPLEFT", scan, "BOTTOMLEFT", 0, -12)
+  area:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 10)
+
+  local GAP = 12
+
+  -- Two tall cards (columns) that reach the bottom edge of the window
+  local leftCard  = CreateCard(area, nil, 100)
+  local rightCard = CreateCard(area, nil, 100)
+
+  leftCard:SetPoint("TOPLEFT", area, "TOPLEFT", 0, 0)
+  leftCard:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 0, 0)
+
+  rightCard:SetPoint("TOPRIGHT", area, "TOPRIGHT", 0, 0)
+  rightCard:SetPoint("BOTTOMRIGHT", area, "BOTTOMRIGHT", 0, 0)
+
+  -- Card headers + descriptions (text under titles)
+  local senderHdr = leftCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+  senderHdr:SetPoint("TOPLEFT", leftCard, "TOPLEFT", 16, -14)
+  senderHdr:SetText("Detected Senders")
+
+  local senderDesc = leftCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  senderDesc:SetPoint("TOPLEFT", senderHdr, "BOTTOMLEFT", 0, -6)
+  senderDesc:SetJustifyH("LEFT")
+  senderDesc:SetText("Players detected in the last 5 minutes with the Client Plugin installed.")
+
+  local spellsHdr = rightCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+  spellsHdr:SetPoint("TOPLEFT", rightCard, "TOPLEFT", 16, -14)
+  spellsHdr:SetText("What it broadcasts")
+
+  local spellsDesc = rightCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  spellsDesc:SetPoint("TOPLEFT", spellsHdr, "BOTTOMLEFT", 0, -6)
+  spellsDesc:SetJustifyH("LEFT")
+  spellsDesc:SetText("This sender broadcasts cooldown usage for spells you have enabled on the Tracking page.")
+
+  -- Scroll frames inside both cards (Spells page only)
+  local senderScroll = CreateFrame("ScrollFrame", nil, leftCard, "UIPanelScrollFrameTemplate")
+  senderScroll:SetPoint("TOPLEFT", senderDesc, "BOTTOMLEFT", -2, -10)
+  senderScroll:SetPoint("BOTTOMRIGHT", leftCard, "BOTTOMRIGHT", -28, 12)
+
+  local senderContent = CreateFrame("Frame", nil, senderScroll)
+  senderContent:SetPoint("TOPLEFT", 0, 0)
+  senderContent:SetWidth(200)
+  senderScroll:SetScrollChild(senderContent)
+
+  local spellScroll = CreateFrame("ScrollFrame", nil, rightCard, "UIPanelScrollFrameTemplate")
+  spellScroll:SetPoint("TOPLEFT", spellsDesc, "BOTTOMLEFT", -2, -10)
+  spellScroll:SetPoint("BOTTOMRIGHT", rightCard, "BOTTOMRIGHT", -28, 12)
+
+  local spellContent = CreateFrame("Frame", nil, spellScroll)
+  spellContent:SetPoint("TOPLEFT", 0, 0)
+  spellContent:SetWidth(300)
+  spellScroll:SetScrollChild(spellContent)
+
+  -- Keep everything within the visible window and keep both cards the same size
+  local function UpdateWidths()
+    local w = area:GetWidth()
+    local h = area:GetHeight()
+    if not w or w < 120 or not h or h < 80 then
+      return false
+    end
+
+    -- Two columns with a fixed gap; clamp so we never exceed available width.
+    local col = math.floor((w - GAP) / 2)
+    if col < 1 then col = 1 end
+
+    leftCard:SetWidth(col)
+    rightCard:SetWidth(col)
+    rightCard:ClearAllPoints()
+    rightCard:SetPoint("TOPLEFT", leftCard, "TOPRIGHT", GAP, 0)
+    rightCard:SetPoint("BOTTOMLEFT", leftCard, "BOTTOMRIGHT", GAP, 0)
+
+    -- Wrap header/description text to column width
+    senderDesc:SetWidth(math.max(col - 32, 1))
+    spellsDesc:SetWidth(math.max(col - 32, 1))
+    desc:SetWidth(math.max(w - 8, 1))
+
+    -- Scroll content width (inside padding)
+    senderContent:SetWidth(math.max(col - 56, 1))
+    spellContent:SetWidth(math.max(col - 56, 1))
+    return true
+  end
+  area:HookScript("OnShow", function()
+    RC_DeferUntilSized(area, function()
+      UpdateWidths()
+      RefreshSenderList()
+      RefreshSenderSpellsPage()
+    end)
+  end)
+  area:HookScript("OnSizeChanged", function()
+    RC_DeferUntilSized(area, function() UpdateWidths() end)
+  end)
+  RC_DeferUntilSized(area, function()
+    UpdateWidths()
+    RefreshSenderList()
+    RefreshSenderSpellsPage()
+  end)
+
+  SenderPage.senderScroll   = senderScroll
+  SenderPage.senderContent  = senderContent
+  SenderPage.spellScroll    = spellScroll
+  SenderPage.spellContent   = spellContent
+
+  SenderPage.statusFS = nil
+  SenderPage.built = true
+
+
+  -- Finish after the UI has resolved final sizes (prevents 1-frame snap/flicker)
+  C_Timer.After(0, function()
+    RefreshSenderList()
+    RefreshSenderSpellsPage()
+    page:SetAlpha(1)
+  end)
+end
+
     -- DISTRIBUTE CATEGORIES BETWEEN COLUMNS
     ------------------------------------------------
   -- LEFT COLUMN
@@ -6371,6 +7200,8 @@ SlashCmdList.RAIDCOOLDOWNS = function()
     UpdatePanelMouseState()
     UpdatePanelBackground()
 
+        -- Register combat log tracking (safe to defer if in combat)
+
     if RC.locked then
         print("RaidCooldowns locked")
     else
@@ -6389,6 +7220,8 @@ SlashCmdList.RAIDCDUNLOCK = function()
     UpdatePanelMouseState()
     UpdatePanelBackground()
 
+        -- Register combat log tracking (safe to defer if in combat)
+
     print("RaidCooldowns force-unlocked")
 
 end
@@ -6400,6 +7233,12 @@ SlashCmdList.RAIDCDOPTIONS = function()
 
     if not options then
         InitUI()
+        -- Register addon comms prefix (used to sync cooldowns between clients)
+        if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+            C_ChatInfo.RegisterAddonMessagePrefix("RAIDCOOLDOWNS")
+            C_ChatInfo.RegisterAddonMessagePrefix(SENDER_PREFIX)
+            RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+        end
     end
 
     options:SetShown(not options:IsShown())
@@ -6439,3 +7278,12 @@ SlashCmdList.RAIDCDREFRESH = function()
     UpdateLayout()
     print("RaidCooldowns refreshed")
 end
+
+
+------------------------------------------------
+-- SENDER MODE UI (Spells Page)
+-- Ensures BuildSenderSpellsPage exists before ShowPage("Spells") calls it.
+------------------------------------------------
+
+-- Forward-safe defaults (in case something calls these before full init)
+BuildSenderSpellsPage = BuildSenderSpellsPage or function() end
