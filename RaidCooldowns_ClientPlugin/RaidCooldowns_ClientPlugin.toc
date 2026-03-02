@@ -1,0 +1,6 @@
+## Interface: 120001
+## Title: |cff00c6ffRaid|r|cffffcc00Cooldowns|r_clientPlugin (RaidCooldowns Client Plugin)
+## Notes: Install this ONLY if you do NOT run the full RaidCooldowns tracker. It silently sends your cooldown casts to the tracker (no chat spam).
+## Author: ValsZone
+## Version: 1.1.0+id
+RaidCooldowns_ClientPlugin.lua
