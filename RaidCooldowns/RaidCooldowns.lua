@@ -744,8 +744,13 @@ end
  if event == "PLAYER_LOGIN" then
 
     C_Timer.After(0.5, function()
+	  RaidCooldownsDB = RaidCooldownsDB or {}
+	RC.locked = (RaidCooldownsDB and RaidCooldownsDB.locked) ~= false  
 
         InitUI()
+		if UpdatePanelMouseState then UpdatePanelMouseState() end
+if UpdatePanelBackground then UpdatePanelBackground() end
+if RC_CreateLDBLauncher then RC_CreateLDBLauncher() end
         -- Register addon comms prefix (used to sync cooldowns between clients)
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix("RAIDCOOLDOWNS")
@@ -1433,6 +1438,44 @@ function IsActiveChoiceSpell(spellID)
     return true -- Not in a choice node, allow normally
 end
 
+
+
+function RC_CreateLDBLauncher()
+    if not LibStub then return end
+    local LDB = LibStub("LibDataBroker-1.1", true)
+    if not LDB then return end
+    if _G.RaidCooldowns_LDB then return end
+
+    _G.RaidCooldowns_LDB = LDB:NewDataObject("RaidCooldowns", {
+        type = "launcher",
+        label = "RaidCooldowns",
+        icon = "Interface\\AddOns\\RaidCooldowns\\Media\\logo",
+
+        OnClick = function(_, button)
+            if button == "LeftButton" then
+                -- Call your existing slash handler so we don't depend on 'options' scope
+                if SlashCmdList and SlashCmdList["RAIDCDOPTIONS"] then
+                    SlashCmdList["RAIDCDOPTIONS"]("")
+                else
+                    -- fallback: try init + show options if yours is different
+                    if not options and InitUI then InitUI() end
+                    if options then options:SetShown(not options:IsShown()) end
+                end
+            else
+                RC.locked = not RC.locked
+                if UpdatePanelMouseState then UpdatePanelMouseState() end
+                if UpdatePanelBackground then UpdatePanelBackground() end
+                print(RC.locked and "RaidCooldowns locked" or "RaidCooldowns unlocked (drag panel)")
+            end
+        end,
+
+        OnTooltipShow = function(tt)
+            tt:AddLine("RaidCooldowns")
+            tt:AddLine("Left-click: Options", 1, 1, 1)
+            tt:AddLine("Right-click: Lock/Unlock", 1, 1, 1)
+        end,
+    })
+end
 
 ------------------------------------------------
 -- UPDATE OWNERS (FINAL SAFE - NO GOTO)
@@ -2262,7 +2305,7 @@ end
 
 
 ------------------------------------------------
--- PAGE LOGO (REUSABLE)
+-- PAGE LOGO 
 ------------------------------------------------
 function AddPageLogo(parent)
 
@@ -4373,7 +4416,10 @@ end
 -- UPDATE PANEL MOUSE STATE
 ------------------------------------------------
 function UpdatePanelMouseState()
-    panel:EnableMouse(not RC.locked)
+    if not panel then return end
+    local locked = (RC.locked == true) -- treat nil as unlocked? or default locked, see below
+    panel:EnableMouse(not locked)
+    panel:SetMovable(not locked)
 end
 
 
@@ -7185,7 +7231,131 @@ end
 
 end
 
+-- =========================================================
+-- Minimap Button (no libs)
+-- Left-click: toggle options window
+-- Right-click: lock/unlock panel
+-- Drag: move around minimap
+-- =========================================================
+local function RC_Minimap_ClampAngle(a)
+    a = (a or 225) % 360
+    if a < 0 then a = a + 360 end
+    return a
+end
 
+local function RC_Minimap_SetPos(btn, angle)
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.minimap = RaidCooldownsDB.minimap or {}
+    angle = RC_Minimap_ClampAngle(angle)
+    RaidCooldownsDB.minimap.angle = angle
+
+    local rad = math.rad(angle)
+    local radius = 80
+    btn:SetPoint("CENTER", Minimap, "CENTER", math.cos(rad) * radius, math.sin(rad) * radius)
+end
+
+local function RC_ToggleOptionsWindow()
+    if not options then
+        InitUI()
+        if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+            C_ChatInfo.RegisterAddonMessagePrefix("RAIDCOOLDOWNS")
+            C_ChatInfo.RegisterAddonMessagePrefix(SENDER_PREFIX)
+            RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+        end
+    end
+
+    options:SetShown(not options:IsShown())
+
+    if options:IsShown() then
+        if ShowPage then ShowPage("Layout") end
+        if UpdateLayoutPageHeight then UpdateLayoutPageHeight() end
+    end
+end
+
+function RC_CreateMinimapButton()
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.minimap = RaidCooldownsDB.minimap or {}
+
+    if RaidCooldownsDB.minimap.hide then return end
+
+    if _G.RaidCooldowns_MinimapButton then
+        RC_Minimap_SetPos(_G.RaidCooldowns_MinimapButton, RaidCooldownsDB.minimap.angle)
+        _G.RaidCooldowns_MinimapButton:Show()
+        return
+    end
+
+    local btn = CreateFrame("Button", "RaidCooldowns_MinimapButton", Minimap)
+    btn:SetSize(32, 32)
+    btn:SetFrameStrata("MEDIUM")
+    btn:SetMovable(true)
+    btn:EnableMouse(true)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:RegisterForDrag("LeftButton")
+    btn:SetClampedToScreen(true)
+
+    local icon = btn:CreateTexture(nil, "BACKGROUND")
+    icon:SetAllPoints(btn)
+    icon:SetTexture("Interface\\AddOns\\RaidCooldowns\\Media\\logo") -- your logo.tga
+    btn.icon = icon
+
+    local border = btn:CreateTexture(nil, "OVERLAY")
+    border:SetAllPoints(btn)
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    btn.border = border
+
+    btn:SetScript("OnClick", function(_, mouseButton)
+        if mouseButton == "LeftButton" then
+            RC_ToggleOptionsWindow()
+        else
+            -- Right-click: lock/unlock like /raidcd
+            RC.locked = not RC.locked
+            if UpdatePanelMouseState then UpdatePanelMouseState() end
+            if UpdatePanelBackground then UpdatePanelBackground() end
+            print(RC.locked and "RaidCooldowns locked" or "RaidCooldowns unlocked (drag panel)")
+        end
+    end)
+
+    btn:SetScript("OnDragStart", function(self)
+        self.isDragging = true
+        self:LockHighlight()
+    end)
+
+    btn:SetScript("OnDragStop", function(self)
+        self.isDragging = false
+        self:UnlockHighlight()
+    end)
+
+    btn:SetScript("OnUpdate", function(self)
+        if not self.isDragging then return end
+        local mx, my = Minimap:GetCenter()
+        local cx, cy = GetCursorPosition()
+        local scale = UIParent:GetEffectiveScale()
+        cx, cy = cx / scale, cy / scale
+        local dx, dy = cx - mx, cy - my
+        local angle = math.deg(math.atan2(dy, dx))
+        RC_Minimap_SetPos(self, angle)
+    end)
+
+    RC_Minimap_SetPos(btn, RaidCooldownsDB.minimap.angle or 225)
+end
+
+-- Optional: slash to show/hide minimap button
+SLASH_RAIDCDMINIMAP1 = "/raidcdminimap"
+SlashCmdList.RAIDCDMINIMAP = function(msg)
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.minimap = RaidCooldownsDB.minimap or {}
+    msg = (msg or ""):lower()
+
+    if msg == "hide" then
+        RaidCooldownsDB.minimap.hide = true
+        if _G.RaidCooldowns_MinimapButton then _G.RaidCooldowns_MinimapButton:Hide() end
+        print("RaidCooldowns: minimap button hidden.")
+    else
+        RaidCooldownsDB.minimap.hide = false
+        RC_CreateMinimapButton()
+        print("RaidCooldowns: minimap button shown. (/raidcdminimap hide to hide)")
+    end
+end
 
 ------------------------------------------------
 -- SLASH COMMANDS

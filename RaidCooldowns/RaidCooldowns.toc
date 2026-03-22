@@ -1,5 +1,7 @@
-## Interface: 120000
-## Title: RaidCooldowns
+## Interface: 120001
+## Title: |cff00c6ffRaid|r|cffffcc00Cooldowns|r
+## IconTexture: Interface\AddOns\RaidCooldowns\Media\logo_64
+## OptionalDeps: LibStub, LibDataBroker-1.1
 ## Notes: Advanced raid cooldowns, alerts, utilities & voice cues
 ## Author: Valszone
 ## Version: 0.1.2
