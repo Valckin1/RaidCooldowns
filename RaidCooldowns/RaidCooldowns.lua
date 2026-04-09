@@ -206,7 +206,7 @@ local HEALING_COOLDOWNS = {
 
     -- PALADIN
     [31821]  = { name = "Aura Mastery", class = "PALADIN", cooldown = 180, category = "raid" },
-    [31884]  = { name = "Avenging Wrath", class = "PALADIN", cooldown = 120, category = "raid" },
+    [31884]  = { name = "Avenging Wrath", class = "PALADIN", cooldown = 60, category = "raid" },
 
     -- EVOKER
     [359816] = { name = "Dream Flight", class = "EVOKER", cooldown = 120, category = "raid" },
