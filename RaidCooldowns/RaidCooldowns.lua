@@ -177,50 +177,67 @@ end
 local HEALING_COOLDOWNS = {
 
     -- DRUID
-    [740]   = { name = "Tranquility", class = "DRUID", cooldown = 180, category = "raid" },
-[33891] = { name = "Incarnation: Tree of Life", class = "DRUID", cooldown = 180, category = "raid" },
-[29166] = { name = "Innervate", class = "DRUID", cooldown = 180, category = "external" },
-[20484] = { name = "Rebirth", class = "DRUID", cooldown = 600, category = "bres" },
+    [740]    = { name = "Tranquility", class = "DRUID", cooldown = 180, category = "raid" },
+    [33891]  = { name = "Incarnation: Tree of Life", class = "DRUID", cooldown = 180, category = "raid" },
+    [29166]  = { name = "Innervate", class = "DRUID", cooldown = 180, category = "external" },
+    [20484]  = { name = "Rebirth", class = "DRUID", cooldown = 600, category = "bres" },
 
     -- SHAMAN
-  [114052] = { name = "Ascendance", class = "SHAMAN", cooldown = 180, category = "raid" },
-[108280] = { name = "Healing Tide Totem", class = "SHAMAN", cooldown = 180, category = "raid" },
-[98008]  = { name = "Spirit Link Totem", class = "SHAMAN", cooldown = 180, category = "raid" },
-[2825]   = { name = "Bloodlust", class = "SHAMAN", cooldown = 300, category = "utility" },
-
+    [114052] = { name = "Ascendance", class = "SHAMAN", cooldown = 180, category = "raid" },
+    [108280] = { name = "Healing Tide Totem", class = "SHAMAN", cooldown = 120, category = "raid" },
+    [98008]  = { name = "Spirit Link Totem", class = "SHAMAN", cooldown = 180, category = "raid" },
+    [207399] = { name = "Ancestral Protection Totem", class = "SHAMAN", cooldown = 300, category = "utility" },
+    [192077] = { name = "Wind Rush Totem", class = "SHAMAN", cooldown = 120, category = "utility" },
+    [2825]   = { name = "Bloodlust", class = "SHAMAN", cooldown = 300, category = "utility" },
 
     -- PRIEST
-   [64843]  = { name = "Divine Hymn", class = "PRIEST", cooldown = 180, category = "raid" },
-[47788]  = { name = "Guardian Spirit", class = "PRIEST", cooldown = 180, category = "external" },
-[33206]  = { name = "Pain Suppression", class = "PRIEST", cooldown = 180, category = "external" },
-[62618]  = { name = "Power Word: Barrier", class = "PRIEST", cooldown = 180, category = "raid" },
-[421453] = { name = "Ultimate Penitence", class = "PRIEST", cooldown = 240, category = "raid" },
+    [64843]  = { name = "Divine Hymn", class = "PRIEST", cooldown = 180, category = "raid" },
+    [47788]  = { name = "Guardian Spirit", class = "PRIEST", cooldown = 180, category = "external" },
+    [33206]  = { name = "Pain Suppression", class = "PRIEST", cooldown = 180, category = "external" },
+    [62618]  = { name = "Power Word: Barrier", class = "PRIEST", cooldown = 180, category = "raid" },
+    [271466] = { name = "Luminous Barrier", class = "PRIEST", cooldown = 180, category = "raid" },
+    [472433] = { name = "Evangelism", class = "PRIEST", cooldown = 90, category = "raid" },
+    [421453] = { name = "Ultimate Penitence", class = "PRIEST", cooldown = 240, category = "raid" },
 
     -- MONK
-  [115310] = { name = "Revival", class = "MONK", cooldown = 180, category = "raid" },
-[388615] = { name = "Restoral", class = "MONK", cooldown = 180, category = "raid" },
+    [115310] = { name = "Revival", class = "MONK", cooldown = 180, category = "raid" },
+    [388615] = { name = "Restoral", class = "MONK", cooldown = 180, category = "raid" },
+    [443028] = { name = "Celestial Conduit", class = "MONK", cooldown = 90, category = "raid" },
 
     -- PALADIN
-  [31821]  = { name = "Aura Mastery", class = "PALADIN", cooldown = 180, category = "raid" },
+    [31821]  = { name = "Aura Mastery", class = "PALADIN", cooldown = 180, category = "raid" },
+    [31884]  = { name = "Avenging Wrath", class = "PALADIN", cooldown = 120, category = "raid" },
 
     -- EVOKER
-  [363534] = { name = "Rewind", class = "EVOKER", cooldown = 240, category = "raid" },
+    [359816] = { name = "Dream Flight", class = "EVOKER", cooldown = 120, category = "raid" },
+    [363534] = { name = "Rewind", class = "EVOKER", cooldown = 240, category = "raid" },
+    [374227] = { name = "Zephyr", class = "EVOKER", cooldown = 120, category = "raid" },
+    [390386] = { name = "Fury of the Aspects", class = "EVOKER", cooldown = 300, category = "utility" },
 
     -- DEATH KNIGHT
-   [51052] = { name = "Anti-Magic Zone", class = "DEATHKNIGHT", cooldown = 240, category = "raid" },
-[61999] = { name = "Raise Ally", class = "DEATHKNIGHT", cooldown = 600, category = "bres" },
+    [51052]  = { name = "Anti-Magic Zone", class = "DEATHKNIGHT", cooldown = 240, category = "raid" },
+    [61999]  = { name = "Raise Ally", class = "DEATHKNIGHT", cooldown = 600, category = "bres" },
+
+    -- HUNTER
+    [272678] = { name = "Primal Rage", class = "HUNTER", cooldown = 360, category = "utility" },
+    [186265] = { name = "Aspect of the Turtle", class = "HUNTER", cooldown = 180, category = "raid" },
 
     -- MAGE
-   [80353] = { name = "Time Warp", class = "MAGE", cooldown = 300, category = "utility" },
+    [80353]  = { name = "Time Warp", class = "MAGE", cooldown = 300, category = "utility" },
+
+    -- WARRIOR
+    [97462]  = { name = "Rallying Cry", class = "WARRIOR", cooldown = 180, category = "raid" },
+    [23920]  = { name = "Spell Reflection", class = "WARRIOR", cooldown = 20, category = "utility" },
 
     -- DEMON HUNTER
     [196718] = { name = "Darkness", class = "DEMONHUNTER", cooldown = 300, category = "raid" },
 
     -- WARLOCK
-   [20707] = { name = "Soulstone", class = "WARLOCK", cooldown = 600, category = "bres" },
+    [20707]  = { name = "Soulstone", class = "WARLOCK", cooldown = 600, category = "bres" },
 }
 
 ------------------------------------------------
+-- INTERNAL STATE------------------------------------------------
 -- INTERNAL STATE
 ------------------------------------------------
 local RC = {
@@ -1293,18 +1310,30 @@ end
 local HEALER_ONLY = {
     [740]    = true,
     [29166]  = true,
+    [33891]  = true,
+
     [108280] = true, -- Healing Tide
-    [114052] = true, -- ✅ Ascendance (FIX)
+    [114052] = true, -- Ascendance
     [98008]  = true,
+    [207399] = true,
+
     [64843]  = true,
     [62618]  = true,
+    [271466] = true,
     [47788]  = true,
     [33206]  = true,
-    [31821]  = true,
-    [363534] = true,
-	[115310] = true,
-[388615] = true,
+    [472433] = true,
+    [421453] = true,
 
+    [31821]  = true,
+
+    [359816] = true,
+    [363534] = true,
+    [374227] = true,
+
+    [115310] = true,
+    [388615] = true,
+    [443028] = true,
 }
 
 local ALWAYS_VISIBLE = {
@@ -1318,40 +1347,62 @@ local ALWAYS_VISIBLE = {
 -- NON-HEALER SPELL → VALID SPECS
 ------------------------------------------------
 local NON_HEALER_SPELL_SPECS = {
-  [2825] = { [262]=true, [263]=true, [264]=true }, -- Bloodlust
-    [80353] = { [62] = true, [63] = true, [64] = true },     -- Time Warp (Mage)
-    [196718]= { [577] = true, [581] = true },                -- Darkness (DH)
-    [51052] = { [250] = true },                              -- AMZ (Blood DK)
-    [20707] = { [265] = true, [266] = true, [267] = true },  -- Soulstone (Warlock)
+    [2825]   = { [262]=true, [263]=true, [264]=true }, -- Bloodlust
+    [80353]  = { [62]=true, [63]=true, [64]=true },    -- Time Warp
+    [196718] = { [577]=true, [581]=true },             -- Darkness
+    [51052]  = { [250]=true },                         -- AMZ
+    [20707]  = { [265]=true, [266]=true, [267]=true },-- Soulstone
+    [390386] = { [1467]=true, [1468]=true, [1473]=true }, -- Fury of the Aspects
+    [272678] = { [253]=true, [254]=true, [255]=true }, -- Primal Rage
+    [186265] = { [253]=true, [254]=true, [255]=true }, -- Aspect of the Turtle
+    [97462]  = { [71]=true, [72]=true, [73]=true },    -- Rallying Cry
+    [23920]  = { [71]=true, [72]=true, [73]=true },    -- Spell Reflection
+    [31884]  = { [65]=true, [66]=true, [70]=true },    -- Avenging Wrath
+    [192077] = { [262]=true, [263]=true, [264]=true }, -- Wind Rush Totem
 }
 
-
-
 ------------------------------------------------
+-- SPEC FILTER------------------------------------------------
 -- SPEC FILTER (SOURCE OF TRUTH)
 ------------------------------------------------
 local SPEC_FILTER = {
 
     -- PRIEST
     [64843]  = { [257] = true }, -- Divine Hymn (Holy)
-    [62618]  = { [256] = true }, -- Barrier (Disc)
+    [62618]  = { [256] = true }, -- Power Word: Barrier (Disc)
+    [271466] = { [257] = true }, -- Luminous Barrier (Holy)
     [47788]  = { [257] = true }, -- Guardian Spirit (Holy)
     [33206]  = { [256] = true }, -- Pain Suppression (Disc)
+    [472433] = { [256] = true }, -- Evangelism (Disc)
+    [421453] = { [256] = true }, -- Ultimate Penitence (Disc)
 
     -- DRUID
     [740]    = { [105] = true }, -- Tranquility
+    [33891]  = { [105] = true }, -- Incarnation: Tree of Life
     [29166]  = { [105] = true }, -- Innervate
 
     -- SHAMAN
     [108280] = { [264] = true }, -- Healing Tide
     [98008]  = { [264] = true }, -- Spirit Link
-	[114052] = { [264] = true }, -- Ascendance (Resto only)
+    [114052] = { [264] = true }, -- Ascendance
+    [207399] = { [264] = true }, -- Ancestral Protection Totem
+
     -- PALADIN
     [31821]  = { [65] = true },  -- Aura Mastery
+
+    -- MONK
+    [115310] = { [270] = true }, -- Revival
+    [388615] = { [270] = true }, -- Restoral
+    [443028] = { [270] = true }, -- Celestial Conduit
+
+    -- EVOKER
+    [359816] = { [1467] = true }, -- Dream Flight
+    [363534] = { [1467] = true }, -- Rewind
+    [374227] = { [1467] = true }, -- Zephyr
 }
 
-
 ------------------------------------------------
+-- SENDER CSV------------------------------------------------
 -- SENDER CSV (DEFINE HERE SO LOCAL SPELL TABLES ARE IN SCOPE)
 ------------------------------------------------
 function RC_SenderHashFromDB()
@@ -1411,10 +1462,15 @@ end
 ------------------------------------------------
 SHORT_SPELL_NAMES = {
 
+    -- Druid
+    [33891]  = "Incarnation",
+
     -- Shaman
     [108280] = "Healing Tide",
     [98008]  = "Spirit Link",
     [114052] = "Ascendance",
+    [207399] = "Ancestral Protection",
+    [192077] = "Wind Rush",
 
     -- Death Knight
     [51052]  = "AMZ",
@@ -1422,13 +1478,16 @@ SHORT_SPELL_NAMES = {
     -- Priest
     [62618]  = "Barrier",
     [64843]  = "Divine Hymn",
-	[33206]  = "Pain Suppress",
-	[421453] = "Ult. Penitence",
-	
-    -- Druid
-    [33891]    = "Incarnation",
+    [33206]  = "Pain Suppression",
+    [421453] = "Ult. Penitence",
+
+    -- Hunter
+    [186265] = "Turtle",
 }
 
+
+
+-- ✅ DEFAULTS
 
 -- ✅ DEFAULTS (SAFE MERGE)
 local DEFAULT_SETTINGS = {
@@ -2628,18 +2687,27 @@ enableAllBtn:SetPoint("TOPLEFT", shortNamesCB, "BOTTOMLEFT", 0, -10)
 disableAllBtn:SetPoint("LEFT", enableAllBtn, "RIGHT", 10, 0)
 
 
+-- Scrollable tracked-spells area
+trackingScroll = CreateFrame("ScrollFrame", nil, trackingCenterWrap, "UIPanelScrollFrameTemplate")
+trackingScroll:SetPoint("TOPLEFT", trackingOptionsCard, "BOTTOMLEFT", 0, -24)
+trackingScroll:SetPoint("BOTTOMRIGHT", trackingCenterWrap, "BOTTOMRIGHT", -28, 0)
+
+trackingScrollChild = CreateFrame("Frame", nil, trackingScroll)
+trackingScrollChild:SetPoint("TOPLEFT", 0, 0)
+trackingScrollChild:SetWidth((COLUMN_WIDTH * 2) + COLUMN_GAP)
+trackingScrollChild:SetHeight(1)
+trackingScroll:SetScrollChild(trackingScrollChild)
+
 -- LEFT COLUMN
-trackingLeftColumn = CreateFrame("Frame", nil, trackingCenterWrap)
+trackingLeftColumn = CreateFrame("Frame", nil, trackingScrollChild)
 trackingLeftColumn:ClearAllPoints()
-trackingLeftColumn:SetPoint("TOPLEFT", trackingOptionsCard, "BOTTOMLEFT", 0, -24)
-trackingLeftColumn:SetPoint("BOTTOMLEFT", trackingCenterWrap, "BOTTOMLEFT", 0, 0)
+trackingLeftColumn:SetPoint("TOPLEFT", trackingScrollChild, "TOPLEFT", 0, 0)
 trackingLeftColumn:SetWidth(COLUMN_WIDTH)
 
 -- RIGHT COLUMN
-trackingRightColumn = CreateFrame("Frame", nil, trackingCenterWrap)
+trackingRightColumn = CreateFrame("Frame", nil, trackingScrollChild)
 trackingRightColumn:ClearAllPoints()
 trackingRightColumn:SetPoint("TOPLEFT", trackingLeftColumn, "TOPRIGHT", COLUMN_GAP, 0)
-trackingRightColumn:SetPoint("BOTTOMLEFT", trackingCenterWrap, "BOTTOMLEFT", COLUMN_WIDTH + COLUMN_GAP, 0)
 trackingRightColumn:SetWidth(COLUMN_WIDTH)
 
 TrackingLeftStack = CreateStack(
@@ -2660,7 +2728,6 @@ TrackingRightStack = CreateStack(
 
 trackingCenterWrap:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0)
 
-
 -- NOW create cards
 trackingLeftCard = CreateCard(trackingLeftColumn, nil, COLUMN_WIDTH)
 trackingRightCard = CreateCard(trackingRightColumn, nil, COLUMN_WIDTH)
@@ -2669,14 +2736,20 @@ trackingLeftCard:SetPoint("TOPLEFT", trackingLeftColumn, "TOPLEFT", 0, 0)
 trackingRightCard:SetPoint("TOPLEFT", trackingRightColumn, "TOPLEFT", 0, 0)
 
 -- Title only on LEFT
-local trackingTitle, trackingSep =
+trackingTitle, trackingSep =
     CreateSection(
-        trackingCenterWrap,
+        trackingScrollChild,
         "Tracked Spells",
         (COLUMN_WIDTH * 2) + COLUMN_GAP
     )
 
+trackingTitle:SetPoint("TOP", trackingScrollChild, "TOP", 0, 0)
+trackingSep:SetPoint("TOP", trackingTitle, "BOTTOM", 0, -8)
 
+trackingLeftColumn:ClearAllPoints()
+trackingLeftColumn:SetPoint("TOPLEFT", trackingSep, "BOTTOMLEFT", 0, -18)
+trackingRightColumn:ClearAllPoints()
+trackingRightColumn:SetPoint("TOPLEFT", trackingLeftColumn, "TOPRIGHT", COLUMN_GAP, 0)
 
 local spacerTitle = trackingRightColumn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 spacerTitle:SetText(" ")
@@ -2694,8 +2767,10 @@ TrackingRightStack:Add(spacerSep, -6)
 
 
 
-end
 
+
+
+end
 
 ------------------------------------------------
 -- CREATE COLUMN WRAPPERS 
@@ -3006,6 +3081,13 @@ AddSliderValueText(spellTextSize)
 spellTextSize:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
     RaidCooldownsDB.settings.spellTextSize = value
+
+    local profile = GetProfile()
+    if profile then
+        profile.settings = profile.settings or {}
+        profile.settings.spellTextSize = value
+    end
+
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3066,6 +3148,13 @@ AddSliderValueText(cdTextSize)
 cdTextSize:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
     RaidCooldownsDB.settings.cdTextSize = value
+
+    local profile = GetProfile()
+    if profile then
+        profile.settings = profile.settings or {}
+        profile.settings.cdTextSize = value
+    end
+
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -4629,6 +4718,36 @@ end
 ------------------------------------------------
 -- UPDATE GROUP COOLDOWN (RETAIL SAFE / NO TAINT)
 ------------------------------------------------
+
+local function RC_PlayerHasTalentSpell(spellID)
+    if not spellID then return false end
+    if IsPlayerSpell and IsPlayerSpell(spellID) then
+        return true
+    end
+    return false
+end
+
+function RC_GetEffectiveCooldown(spellID)
+    local spellData = HEALING_COOLDOWNS and HEALING_COOLDOWNS[spellID]
+    local base = spellData and tonumber(spellData.cooldown) or 0
+    if base <= 0 then return 0 end
+
+    -- Fixed passive reductions only.
+    if spellID == 114052 and RC_PlayerHasTalentSpell(462440) then -- First Ascendant
+        return math.max(0, base - 60)
+    elseif spellID == 31821 and RC_PlayerHasTalentSpell(392911) then -- Unwavering Spirit
+        return math.max(0, base - 30)
+    elseif spellID == 363534 and RC_PlayerHasTalentSpell(381922) then -- Temporal Artificer
+        return math.max(0, base - 60)
+    elseif spellID == 51052 and RC_PlayerHasTalentSpell(374383) then -- Assimilation
+        return math.max(0, base - 60)
+    elseif spellID == 196718 and RC_PlayerHasTalentSpell(389783) then -- Pitch Black
+        return math.max(0, base - 120)
+    end
+
+    return base
+end
+
 function UpdateGroupCooldown(group)
 
     if not group or not group.spellID then
@@ -4645,7 +4764,7 @@ function UpdateGroupCooldown(group)
     end
 
     local start = GetTime()
-    local duration = spellData.cooldown
+    local duration = RC_GetEffectiveCooldown(group.spellID)
 
     if not duration or duration <= 0 then
         return
@@ -6892,24 +7011,24 @@ end
 ------------------------------------------------
 function BuildTrackingUI()
 
-   if not trackingLeftCard or not trackingRightCard then
-    return
-end
+    if not trackingLeftCard or not trackingRightCard then
+        return
+    end
 
--- Reset layout tracking
-trackingLeftCard._height  = 12
-trackingLeftCard._last    = nil
-trackingRightCard._height = 12
-trackingRightCard._last   = nil
+    -- Reset layout tracking
+    trackingLeftCard._height  = 12
+    trackingLeftCard._last    = nil
+    trackingRightCard._height = 12
+    trackingRightCard._last   = nil
 
--- Just hide old children instead of detaching
-for _, child in ipairs({trackingLeftCard:GetChildren()}) do
-    child:Hide()
-end
+    -- Hide old children instead of detaching them
+    for _, child in ipairs({ trackingLeftCard:GetChildren() }) do
+        child:Hide()
+    end
 
-for _, child in ipairs({trackingRightCard:GetChildren()}) do
-    child:Hide()
-end
+    for _, child in ipairs({ trackingRightCard:GetChildren() }) do
+        child:Hide()
+    end
 
     ------------------------------------------------
     -- GROUP SPELLS BY CATEGORY
@@ -6921,28 +7040,62 @@ end
         bres     = {},
     }
 
-
-    for spellID, data in pairs(HEALING_COOLDOWNS) do
-        local cat = data.category or "raid"
+    for spellID, data in pairs(HEALING_COOLDOWNS or {}) do
+        local cat = (type(data) == "table" and data.category) or "raid"
         if categories[cat] then
             table.insert(categories[cat], {
                 id   = spellID,
-                name = data.name
+                name = data.name or ("Spell " .. tostring(spellID)),
             })
         end
     end
 
-    -- Sort inside each category
     for _, list in pairs(categories) do
-        table.sort(list, function(a,b)
-            return a.name < b.name
+        table.sort(list, function(a, b)
+            return (a.name or "") < (b.name or "")
         end)
     end
-RC = RC or {}
-RC.categories = categories
 
+    RC = RC or {}
+    RC.categories = categories
 
     ------------------------------------------------
+    -- DISTRIBUTE CATEGORIES BETWEEN COLUMNS
+    ------------------------------------------------
+    RC.AddCategorySection(trackingLeftCard,  "Raid Cooldowns",     RC.categories.raid)
+
+    trackingRightCard._last = nil
+    RC.AddCategorySection(trackingRightCard, "External Cooldowns", RC.categories.external)
+    RC.AddCategorySection(trackingRightCard, "Utility",            RC.categories.utility)
+    RC.AddCategorySection(trackingRightCard, "Battle Res",         RC.categories.bres)
+
+    trackingLeftCard._built = true
+
+    -- Add bottom padding to both cards
+    trackingLeftCard._height  = trackingLeftCard._height + 12
+    trackingRightCard._height = trackingRightCard._height + 12
+
+    trackingLeftCard:SetHeight(trackingLeftCard._height)
+    trackingRightCard:SetHeight(trackingRightCard._height)
+
+    -- Equalize visible card heights
+    local leftHeight  = trackingLeftCard:GetHeight()
+    local rightHeight = trackingRightCard:GetHeight()
+    local cardHeight  = math.max(leftHeight, rightHeight)
+
+    trackingLeftCard:SetHeight(cardHeight)
+    trackingRightCard:SetHeight(cardHeight)
+
+    -- Size the scroll child so the Tracking page can scroll
+    if trackingScrollChild then
+        local neededHeight = math.max(
+            cardHeight,
+            (trackingTitle and trackingTitle:GetHeight() or 0) +
+            (trackingSep and trackingSep:GetHeight() or 0) + 20
+        ) + 24
+        trackingScrollChild:SetHeight(neededHeight)
+    end
+end
 
 ------------------------------------------------
 -- SPELLS PAGE (SENDER MODE)
@@ -7663,47 +7816,6 @@ function BuildSenderSpellsPage()
   end)
 end
 
-    -- DISTRIBUTE CATEGORIES BETWEEN COLUMNS
-    ------------------------------------------------
-  -- LEFT COLUMN
-RC.AddCategorySection(trackingLeftCard, "Raid Cooldowns", RC.categories.raid)
-
--- RIGHT
-trackingRightCard._last = nil
-
-RC.AddCategorySection(trackingRightCard, "External Cooldowns", RC.categories.external)
-RC.AddCategorySection(trackingRightCard, "Utility", RC.categories.utility)
-RC.AddCategorySection(trackingRightCard, "Battle Res", RC.categories.bres)
-
-    trackingLeftCard._built = true
-	
-	local maxHeight = content:GetHeight() - 120
-
-if trackingLeftCard:GetHeight() > maxHeight then
-    trackingLeftCard:SetHeight(maxHeight)
-end
-
-if trackingRightCard:GetHeight() > maxHeight then
-    trackingRightCard:SetHeight(maxHeight)
-end
--- Add bottom padding to both cards
-trackingLeftCard._height = trackingLeftCard._height + 12
-trackingRightCard._height = trackingRightCard._height + 12
-
-trackingLeftCard:SetHeight(trackingLeftCard._height)
-trackingRightCard:SetHeight(trackingRightCard._height)
--- Equalize card heights
-local leftHeight  = trackingLeftCard:GetHeight()
-local rightHeight = trackingRightCard:GetHeight()
-
-local maxHeight = math.max(leftHeight, rightHeight)
-
-trackingLeftCard:SetHeight(maxHeight)
-trackingRightCard:SetHeight(maxHeight)
-end
-
-
- 
 ------------------------------------------------
 -- DEBUG LOGGER
 ------------------------------------------------
@@ -8001,3 +8113,140 @@ end
 
 -- Forward-safe defaults (in case something calls these before full init)
 BuildSenderSpellsPage = BuildSenderSpellsPage or function() end
+
+_G.InitUI = InitUI
+_G.UpdateProfileStatusText = UpdateProfileStatusText
+
+
+------------------------------------------------
+-- TRACKING UI CHECKBOX SIZE FIX
+------------------------------------------------
+do
+    function BuildTrackingUI()
+        if not trackingLeftColumn or not trackingRightColumn then return end
+
+        local function clearFrame(frame)
+            if not frame then return end
+            for _, child in ipairs({ frame:GetChildren() }) do
+                child:Hide()
+                child:SetParent(nil)
+            end
+            for _, region in ipairs({ frame:GetRegions() }) do
+                if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+                    region:Hide()
+                end
+            end
+        end
+
+        clearFrame(trackingLeftColumn)
+        clearFrame(trackingRightColumn)
+
+        local categories = {
+            raid = {},
+            external = {},
+            utility = {},
+            bres = {},
+        }
+
+        for spellID, data in pairs(HEALING_COOLDOWNS or {}) do
+            local cat = (type(data) == "table" and data.category) or "utility"
+            if categories[cat] then
+                table.insert(categories[cat], {
+                    id = spellID,
+                    name = (type(data) == "table" and data.name) or ("Spell " .. tostring(spellID)),
+                })
+            end
+        end
+
+        for _, list in pairs(categories) do
+            table.sort(list, function(a, b)
+                return tostring(a.name) < tostring(b.name)
+            end)
+        end
+
+        local function addSection(parent, titleText, spells, anchorTo)
+            local title = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+            title:SetText("|cffffcc00" .. titleText .. "|r")
+            title:SetJustifyH("LEFT")
+            title:SetWidth(COLUMN_WIDTH - 8)
+
+            if anchorTo then
+                title:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, -18)
+            else
+                title:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+            end
+
+            local sep = CreateFrame("Frame", nil, parent)
+            sep:SetSize(COLUMN_WIDTH - 12, 1)
+            sep:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+            local tex = sep:CreateTexture(nil, "ARTWORK")
+            tex:SetAllPoints()
+            tex:SetColorTexture(1, 1, 1, 0.15)
+
+            local prev = sep
+
+            for _, spell in ipairs(spells or {}) do
+                local cb = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
+                NormalizeCheckButton(cb)
+
+                -- Keep the actual checkbox normal-sized
+                cb:SetSize(24, 24)
+                cb:ClearAllPoints()
+                cb:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -8)
+
+                -- Put the text beside it and constrain only the text
+                cb.Text:ClearAllPoints()
+                cb.Text:SetPoint("LEFT", cb, "RIGHT", 6, 0)
+                cb.Text:SetWidth(COLUMN_WIDTH - 40)
+                cb.Text:SetJustifyH("LEFT")
+                cb.Text:SetWordWrap(false)
+                cb.Text:SetText(spell.name)
+
+                cb:SetChecked(IsSpellTracked(spell.id))
+                cb:SetScript("OnClick", function(self)
+                    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
+                    if self:GetChecked() then
+                        RaidCooldownsDB.trackedSpells[spell.id] = nil
+                    else
+                        RaidCooldownsDB.trackedSpells[spell.id] = false
+                    end
+                    RebuildOrderedList()
+                    UpdateLayout()
+                end)
+
+                prev = cb
+            end
+
+            return prev
+        end
+
+        local leftBottom = addSection(trackingLeftColumn, "Raid Cooldowns", categories.raid, nil)
+
+        local rightBottom = addSection(trackingRightColumn, "Utility", categories.utility, nil)
+        rightBottom = addSection(trackingRightColumn, "External Cooldowns", categories.external, rightBottom)
+        rightBottom = addSection(trackingRightColumn, "Battle Res", categories.bres, rightBottom)
+
+        local function getBottom(obj, fallback)
+            if obj and obj.GetBottom and obj:GetBottom() then
+                return obj:GetBottom()
+            end
+            return fallback and fallback:GetTop() or 0
+        end
+
+        local topY = trackingScrollChild and trackingScrollChild:GetTop() or 0
+        local lowest = math.min(
+            getBottom(leftBottom, trackingLeftColumn),
+            getBottom(rightBottom, trackingRightColumn)
+        )
+        local needed = math.max(260, (topY - lowest) + 40)
+
+        trackingLeftColumn:SetHeight(needed)
+        trackingRightColumn:SetHeight(needed)
+        if trackingScrollChild then
+            trackingScrollChild:SetHeight((trackingTitle and trackingTitle:GetHeight() or 24) + 24 + needed)
+        end
+    end
+end
+
+
+
