@@ -1,9 +1,24 @@
-What is the game version and RaidCooldowns version you're using?
+---
+name: Bug report
+about: Create a report to help us improve
+title: ''
+labels: ''
+assignees: ''
+
+---
+
+Which is the game version and RaidCooldowns version you're using?
+
 
 **Describe the bug**
-- Steps to Reproduce (what did you do to make the bug happen):
+A clear and concise description of what the bug is.
 
-
+**To Reproduce**
+Steps to reproduce the behavior:
+1. Go to '...'
+2. Click on '....'
+3. Scroll down to '....'
+4. See error
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
@@ -13,7 +28,6 @@ If applicable, add screenshots to help explain your problem.
 
 **Lua Error**
 Post here lua errors
-
 
 
 **Additional context**
