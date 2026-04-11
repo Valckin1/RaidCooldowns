@@ -1840,19 +1840,33 @@ wipe(RC.entries)
                     end
                 end
 
-                ------------------------------------------------
-                -- FINAL TALENT CHECK (PLAYER ONLY)
-                ------------------------------------------------
-                if allow and unit == "player" then
-                    if not IsPlayerSpell(spellID) then
-                        allow = false
-                    end
-                end
+               ------------------------------------------------
+-- FINAL TALENT CHECK (PLAYER ONLY)
+------------------------------------------------
+if allow and unit == "player" then
+    if not IsPlayerSpell(spellID) then
+        allow = false
+    end
+end
 
-                ------------------------------------------------
-                -- ADD ENTRY
-                ------------------------------------------------
-                if allow then
+------------------------------------------------
+-- ONLY SHOW OTHER PLAYERS IF THEY HAVE THE CLIENT/FULL ADDON
+------------------------------------------------
+if allow and unit ~= "player" then
+    local baseName = name:gsub("%-.+", "")
+    local hasClient =
+        (RC.senderSeen and RC.senderSeen[baseName]) or
+        (RaidCooldownsDB.senderSpells and RaidCooldownsDB.senderSpells[baseName])
+
+    if not hasClient then
+        allow = false
+    end
+end
+
+------------------------------------------------
+-- ADD ENTRY
+------------------------------------------------
+if allow then
 local key = name .. "#" .. spellID
 local pooledBar = RC.barPool[key]
 
