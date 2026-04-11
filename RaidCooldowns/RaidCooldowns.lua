@@ -1496,7 +1496,7 @@ font = "Fonts\\FRIZQT__.TTF",
     barHeight  = 18,
     barSpacing = 6,
     centerBars = true,
-    hideUnused = true,
+    hideUnused = false,
     template   = "BAR_ONLY",
 
     spellTextOffsetX = 0,
