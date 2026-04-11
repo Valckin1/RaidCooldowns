@@ -1017,7 +1017,12 @@ if event == "TRAIT_CONFIG_UPDATED"
 or event == "SPELLS_CHANGED"
 or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 
- if RC and RC.dragging then return end
+    if RC and RC.dragging then return end
+
+    if InCombatLockdown() then
+        pendingLayoutUpdate = true
+        return
+    end
 
     if rebuildPending then return end
     rebuildPending = true
@@ -1025,6 +1030,11 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
     C_Timer.After(0.15, function()
 
         rebuildPending = false
+
+        if InCombatLockdown() then
+            pendingLayoutUpdate = true
+            return
+        end
 
         -- Clean runtime state
         if RC.entries then
@@ -1104,6 +1114,12 @@ if cmd == "PONG" then
     RaidCooldownsDB.senderSpells[base] = hash or ""
     -- optional: also store by full name in case UI keys by sender-realm
     RaidCooldownsDB.senderSpells[sender] = hash or ""
+
+    if InCombatLockdown() then
+        pendingLayoutUpdate = true
+    else
+        SafeRefreshLayout()
+    end
 end
     end
 
@@ -1849,16 +1865,16 @@ if allow and unit == "player" then
     end
 end
 
-------------------------------------------------
--- ONLY SHOW OTHER PLAYERS IF THEY HAVE THE CLIENT/FULL ADDON
-------------------------------------------------
+-- ONLY SHOW OTHER PLAYERS IF THEY WERE CONFIRMED BY FULL ADDON / CLIENT PLUGIN
 if allow and unit ~= "player" then
     local baseName = name:gsub("%-.+", "")
-    local hasClient =
-        (RC.senderSeen and RC.senderSeen[baseName]) or
-        (RaidCooldownsDB.senderSpells and RaidCooldownsDB.senderSpells[baseName])
+    local hasSpellList =
+        RaidCooldownsDB
+        and RaidCooldownsDB.senderSpells
+        and RaidCooldownsDB.senderSpells[baseName]
+        and RaidCooldownsDB.senderSpells[baseName] ~= ""
 
-    if not hasClient then
+    if not hasSpellList then
         allow = false
     end
 end
