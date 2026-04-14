@@ -1,6 +1,6 @@
-local UpdateDeathVisual -- forward declare (must be before event handler definition)
+local UpdateDeathVisual 
 print("|cff00c6ffRaid|r|cffffcc00Cooldowns|r: Type /rcd for in-game configuration ")
--- Spell info compatibility (Retail uses C_Spell, older clients use global GetSpellInfo)
+
 function RC_GetSpellInfo(spellID)
   if spellID == nil then return nil end
 
@@ -19,7 +19,7 @@ function RC_GetSpellInfo(spellID)
   return nil
 end
 
--- Defer layout until a frame has a real size (prevents blank pages on first show after /reload)
+
 function RC_DeferUntilSized(frame, fn, maxTries)
   maxTries = maxTries or 120
   if not frame or not fn then return end
@@ -34,7 +34,7 @@ function RC_DeferUntilSized(frame, fn, maxTries)
       return
     end
     if tries >= maxTries then
-      -- Give up quietly; next OnShow/OnSizeChanged will try again.
+      
       return
     end
     C_Timer.After(0, step)
@@ -53,8 +53,8 @@ end
 ------------------------------------------------
 -- SENDER MODE (everyone installs lightweight sender addon)
 ------------------------------------------------
-local SENDER_PREFIX = "RAIDCD_SENDER"           -- handshake/status
-local SENDER_DATA_PREFIX = "RAIDCOOLDOWNS"      -- spell broadcast (already used)
+local SENDER_PREFIX = "RAIDCD_SENDER"          
+local SENDER_DATA_PREFIX = "RAIDCOOLDOWNS"     
 RC = RC or {}
 RC.senderSeen = RC.senderSeen or {} -- [baseName] = { lastSeen=serverTime, version=string, hash=string }
 
@@ -236,8 +236,7 @@ local HEALING_COOLDOWNS = {
     [20707]  = { name = "Soulstone", class = "WARLOCK", cooldown = 600, category = "bres" },
 }
 
-------------------------------------------------
--- INTERNAL STATE------------------------------------------------
+
 -- INTERNAL STATE
 ------------------------------------------------
 local RC = {
@@ -434,7 +433,7 @@ local GetCharKey
 local UpdateAllBarFonts  
 local GetCurrentProfileName
 local ApplyTemplateToAllBars
--- PreCreateAllBars can be called very early by events; keep it as a global no-op until real impl is assigned later.
+
 PreCreateAllBars = PreCreateAllBars or function() end
 local DistributeSlidersEvenly
 local RefreshFontDropdown
@@ -1434,9 +1433,9 @@ local SPEC_FILTER = {
 }
 
 ------------------------------------------------
--- SENDER CSV------------------------------------------------
--- SENDER CSV (DEFINE HERE SO LOCAL SPELL TABLES ARE IN SCOPE)
+-- SENDER CSV
 ------------------------------------------------
+
 function RC_SenderHashFromDB()
     local _, playerClass = nil, nil
     if UnitClass then
