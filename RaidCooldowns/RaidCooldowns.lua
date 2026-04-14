@@ -841,6 +841,7 @@ end
 
 
 ev:RegisterEvent("PLAYER_LOGIN")
+ev:RegisterEvent("PLAYER_LOGOUT")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 ev:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
 ev:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -950,7 +951,22 @@ UpdateProfileStatusText()
     return
 end
 
+if event == "PLAYER_LOGOUT" then
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.layout = RaidCooldownsDB.layout or {}
 
+    if panel and panel.GetPoint then
+        local point, _, relativePoint, xOfs, yOfs = panel:GetPoint()
+        RaidCooldownsDB.layout.point = point
+        RaidCooldownsDB.layout.relativePoint = relativePoint
+        RaidCooldownsDB.layout.x = xOfs
+        RaidCooldownsDB.layout.y = yOfs
+        RaidCooldownsDB.layout.width = panel:GetWidth()
+        RaidCooldownsDB.layout.height = panel:GetHeight()
+    end
+
+    return
+end
 
 
 if event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
