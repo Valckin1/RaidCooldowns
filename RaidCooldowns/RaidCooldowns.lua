@@ -184,7 +184,7 @@ local HEALING_COOLDOWNS = {
 
     -- SHAMAN
     [114052] = { name = "Ascendance", class = "SHAMAN", cooldown = 180, category = "raid" },
-    [108280] = { name = "Healing Tide Totem", class = "SHAMAN", cooldown = 120, category = "raid" },
+    [108280] = { name = "Healing Tide Totem", class = "SHAMAN", cooldown = 180, category = "raid" },
     [98008]  = { name = "Spirit Link Totem", class = "SHAMAN", cooldown = 180, category = "raid" },
     [207399] = { name = "Ancestral Protection Totem", class = "SHAMAN", cooldown = 300, category = "utility" },
     [192077] = { name = "Wind Rush Totem", class = "SHAMAN", cooldown = 120, category = "utility" },
@@ -4794,19 +4794,19 @@ function RC_GetEffectiveCooldown(spellID)
     if base <= 0 then return 0 end
 
     -- Fixed passive reductions only.
-    if spellID == 114052 and RC_PlayerHasTalentSpell(462440) then -- First Ascendant
-        return math.max(0, base - 60)
-    elseif spellID == 31821 and RC_PlayerHasTalentSpell(392911) then -- Unwavering Spirit
-        return math.max(0, base - 30)
-    elseif spellID == 363534 and RC_PlayerHasTalentSpell(381922) then -- Temporal Artificer
-        return math.max(0, base - 60)
-    elseif spellID == 51052 and RC_PlayerHasTalentSpell(374383) then -- Assimilation
-        return math.max(0, base - 60)
-    elseif spellID == 196718 and RC_PlayerHasTalentSpell(389783) then -- Pitch Black
-        return math.max(0, base - 120)
-    end
+if (spellID == 114052 or spellID == 108280) and RC_PlayerHasTalentSpell(462440) then -- First Ascendant
+    return math.max(0, base - 60)
+elseif spellID == 31821 and RC_PlayerHasTalentSpell(392911) then -- Unwavering Spirit
+    return math.max(0, base - 30)
+elseif spellID == 363534 and RC_PlayerHasTalentSpell(381922) then -- Temporal Artificer
+    return math.max(0, base - 60)
+elseif spellID == 51052 and RC_PlayerHasTalentSpell(374383) then -- Assimilation
+    return math.max(0, base - 60)
+elseif spellID == 196718 and RC_PlayerHasTalentSpell(389783) then -- Pitch Black
+    return math.max(0, base - 120)
+end
 
-    return base
+return base
 end
 
 function UpdateGroupCooldown(group)
