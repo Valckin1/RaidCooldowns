@@ -385,5 +385,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
 
     local channel = PickChannel()
-    Send(PREFIX_SPELLS, tostring(spellID), channel)
+ local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+Send(PREFIX_SPELLS, tostring(playerName) .. "|" .. tostring(spellID), channel)
 end)

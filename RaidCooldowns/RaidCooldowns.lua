@@ -235,7 +235,7 @@ local HEALING_COOLDOWNS = {
     -- WARLOCK
     [20707]  = { name = "Soulstone", class = "WARLOCK", cooldown = 600, category = "bres" },
 }
- 
+
 
 -- INTERNAL STATE
 ------------------------------------------------
@@ -1180,24 +1180,37 @@ if prefix == "RAIDCD_CLOG" then
         return
     end
 
-    if prefix ~= "RAIDCOOLDOWNS" then return end
-    if RC and RC.debugComms then print("[RaidCooldowns] recv", sender, msg, channel) end
+     if prefix ~= "RAIDCOOLDOWNS" then return end
+    if RC and RC.debugComms then
+        print("[RaidCooldowns] recv", sender, msg, channel)
+    end
     if type(msg) ~= "string" or msg == "" then return end
-    local spellID = tonumber(msg)
-    if not spellID then return end
-    sender = sender and string.format("%s", sender) or ""
-    if sender == "" then return end
-    local senderBase = sender:gsub("%-.+", "")
+
+    local sourceName, spell = msg:match("^(.-)|(%d+)$")
+    local spellID
+
+    if sourceName and spell then
+        spellID = tonumber(spell)
+    else
+        sourceName = sender and string.format("%s", sender) or ""
+        spellID = tonumber(msg)
+    end
+
+    if not spellID or not sourceName or sourceName == "" then return end
+
+    local sourceBase = sourceName:gsub("%-.+", "")
 
     for _, entry in ipairs(RC.entries or {}) do
         if entry.spellID == spellID then
             local owner = entry.owner and string.format("%s", entry.owner) or ""
             local ownerBase = owner:gsub("%-.+", "")
-            if owner == sender or ownerBase == senderBase then
+
+            if owner == sourceName or ownerBase == sourceBase then
                 UpdateGroupCooldown(entry)
             end
         end
     end
+
     return
 end
 
@@ -1237,10 +1250,13 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
                     elseif IsInGroup() then
                         chan = "PARTY"
                     end
-                    if chan then
-                        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(spellID), chan)
-                        if RC and RC.debugComms then print("[RaidCooldowns] send", spellID, chan) end
-                    end
+                   if chan then
+    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+    C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+    if RC and RC.debugComms then
+        print("[RaidCooldowns] send", playerName, spellID, chan)
+    end
+end
                 end
             end
             break

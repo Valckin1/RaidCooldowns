@@ -3,5 +3,5 @@
 ## IconTexture: Interface\AddOns\RaidCooldowns_ClientPlugin\Media\logo_64
 ## Notes: Install this ONLY if you do NOT run the full RaidCooldowns tracker. It silently sends your cooldown casts to the tracker (no chat spam).
 ## Author: ValsZone
-## Version: 1.1.0+id
+## Version: 1.1.1
 RaidCooldowns_ClientPlugin.lua
