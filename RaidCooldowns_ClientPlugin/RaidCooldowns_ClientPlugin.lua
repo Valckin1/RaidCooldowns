@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.2.0"
+local VERSION = "1.1.1"
 
 local TRACKED = {
     -- Druid

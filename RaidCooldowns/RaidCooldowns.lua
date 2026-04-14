@@ -279,7 +279,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.1.1"
+RC.version = "0.1.7"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1141,7 +1141,7 @@ end
     -- ✅ Respond to scans (important)
     if cmd == "PING" then
         local myHash = RC_SenderHashFromDB()
-        local payload = "PONG;1.0.0;" .. (myHash or "")
+local payload = "PONG;" .. tostring(RC.version) .. ";" .. (myHash or "")
 
         if C_ChatInfo and C_ChatInfo.SendAddonMessage then
             C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", sender)
