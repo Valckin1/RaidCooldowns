@@ -235,7 +235,7 @@ local HEALING_COOLDOWNS = {
     -- WARLOCK
     [20707]  = { name = "Soulstone", class = "WARLOCK", cooldown = 600, category = "bres" },
 }
-
+ 
 
 -- INTERNAL STATE
 ------------------------------------------------
