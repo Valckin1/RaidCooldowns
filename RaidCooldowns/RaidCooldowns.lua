@@ -279,7 +279,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.1.8"
+RC.version = "0.1.9"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1859,33 +1859,31 @@ wipe(RC.entries)
                 ------------------------------------------------
                 -- HEALER SPELLS
                 ------------------------------------------------
-                if HEALER_ONLY and HEALER_ONLY[spellID] then
+if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
+    allow = true
 
-                    if unit == "player" then
-                        if SPEC_FILTER and SPEC_FILTER[spellID] then
-                            if specID and SPEC_FILTER[spellID][specID] then
-                                allow = true
-                            end
-                        end
-                    else
-                        if UnitGroupRolesAssigned(unit) == "HEALER" then
-                            allow = true
-                        end
-                    end
+elseif HEALER_ONLY and HEALER_ONLY[spellID] then
+    if unit == "player" then
+        if SPEC_FILTER and SPEC_FILTER[spellID] then
+            if specID and SPEC_FILTER[spellID][specID] then
+                allow = true
+            end
+        end
+    else
+        if UnitGroupRolesAssigned(unit) == "HEALER" then
+            allow = true
+        end
+    end
 
-                ------------------------------------------------
-                -- NON HEALER SPELLS
-                ------------------------------------------------
-                elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
-
-                    if unit == "player" then
-                        if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
-                            allow = true
-                        end
-                    else
-                        allow = true
-                    end
-                end
+elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
+    if unit == "player" then
+        if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
+            allow = true
+        end
+    else
+        allow = true
+    end
+end
 
                ------------------------------------------------
 -- FINAL TALENT CHECK (PLAYER ONLY)
