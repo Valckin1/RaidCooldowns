@@ -281,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.0"
+RC.version = "0.2.1"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -5669,7 +5669,13 @@ RC_Debug(("POINT: %s => %s %s x=%s y=%s"):format(tostring(entry.name), tostring(
                 bar.fill:SetAllPoints(bar)
 
                 bar.label:ClearAllPoints()
-                bar.label:SetPoint("CENTER", bar)
+bar.label:SetPoint(
+    "CENTER",
+    bar,
+    "CENTER",
+    s.spellTextOffsetX or 0,
+    s.spellTextOffsetY or 0
+)
 
                 ApplyClassColor(bar, entry.class)
                 bar.label:SetText(GetBarLabelText(entry))
@@ -5907,8 +5913,8 @@ LayoutHandlers.SPELL_OWNERS = function()
                     bar.fill:Hide()
 
                     bar.label:ClearAllPoints()
-                    bar.label:SetPoint("LEFT", bar.icon, "RIGHT", 6, 0)
-                    bar.label:SetText(GetBarLabelText(entry))
+bar.label:SetPoint("LEFT", bar.icon, "RIGHT", 6 + (s.spellTextOffsetX or 0), s.spellTextOffsetY or 0)
+bar.label:SetText(GetBarLabelText(entry))
                 end
             end
         end
