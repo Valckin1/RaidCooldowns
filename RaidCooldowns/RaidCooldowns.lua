@@ -281,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.1.10"
+RC.version = "0.2.0"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
