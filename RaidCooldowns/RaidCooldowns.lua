@@ -159,8 +159,10 @@ function RC_SenderHashFromDB()
         end
 
         if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-            allow = false
-        end
+    if not (NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID]) then
+        allow = false
+    end
+end
 
         if allow then
             ids[#ids + 1] = tonumber(spellID)
@@ -279,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.1.9"
+RC.version = "0.1.10"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1484,9 +1486,11 @@ function RC_SenderHashFromDB()
             allow = false
         end
 
-        if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-            allow = false
-        end
+if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
+    if not (NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID]) then
+        allow = false
+    end
+end
 
         if allow then
             ids[#ids + 1] = tonumber(spellID)
@@ -1881,7 +1885,16 @@ elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
             allow = true
         end
     else
-        allow = true
+        local baseName = name:gsub("%-.+", "")
+        local csv = RaidCooldownsDB
+            and RaidCooldownsDB.senderSpells
+            and RaidCooldownsDB.senderSpells[baseName]
+
+        if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
+            if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
+                allow = true
+            end
+        end
     end
 end
 
