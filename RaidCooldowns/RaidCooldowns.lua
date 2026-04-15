@@ -281,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.1"
+RC.version = "0.2.2"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1858,68 +1858,42 @@ wipe(RC.entries)
 
             if group.class == class then
 
-                local allow = false
+               local allow = false
 
-                ------------------------------------------------
-                -- HEALER SPELLS
-                ------------------------------------------------
-if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
-    allow = true
+if unit == "player" then
+    if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
+        allow = true
 
-elseif HEALER_ONLY and HEALER_ONLY[spellID] then
-    if unit == "player" then
+    elseif HEALER_ONLY and HEALER_ONLY[spellID] then
         if SPEC_FILTER and SPEC_FILTER[spellID] then
             if specID and SPEC_FILTER[spellID][specID] then
                 allow = true
             end
         end
-    else
-        if UnitGroupRolesAssigned(unit) == "HEALER" then
-            allow = true
-        end
-    end
 
-elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
-    if unit == "player" then
+    elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
         if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
             allow = true
         end
-    else
-        local baseName = name:gsub("%-.+", "")
-        local csv = RaidCooldownsDB
-            and RaidCooldownsDB.senderSpells
-            and RaidCooldownsDB.senderSpells[baseName]
+    end
 
-        if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
-            if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
-                allow = true
-            end
+    if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
+        allow = false
+    end
+else
+    local baseName = name:gsub("%-.+", "")
+    local csv = RaidCooldownsDB
+        and RaidCooldownsDB.senderSpells
+        and RaidCooldownsDB.senderSpells[baseName]
+
+    if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
+        if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
+            allow = true
         end
     end
 end
 
-               ------------------------------------------------
--- FINAL TALENT CHECK (PLAYER ONLY)
-------------------------------------------------
-if allow and unit == "player" then
-    if not IsPlayerSpell(spellID) then
-        allow = false
-    end
-end
-
--- ONLY SHOW OTHER PLAYERS IF THEY WERE CONFIRMED BY FULL ADDON / CLIENT PLUGIN
-if allow and unit ~= "player" then
-    local baseName = name:gsub("%-.+", "")
-    local hasSpellList =
-        RaidCooldownsDB
-        and RaidCooldownsDB.senderSpells
-        and RaidCooldownsDB.senderSpells[baseName]
-        and RaidCooldownsDB.senderSpells[baseName] ~= ""
-
-    if not hasSpellList then
-        allow = false
-    end
-end
+ 
 
 ------------------------------------------------
 -- ADD ENTRY
