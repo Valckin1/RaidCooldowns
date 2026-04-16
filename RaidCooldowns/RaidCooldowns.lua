@@ -281,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.2"
+RC.version = "0.2.3"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1119,17 +1119,14 @@ if event == "CHAT_MSG_ADDON" then
         RC.senderSeen[base] = RC.senderSeen[base] or {}
         RC.senderSeen[base].lastSeen = RC_Now()
 
-        if cmd == "HELLO" or cmd == "PONG" then
-            RC.senderSeen[base].version = ver or RC.senderSeen[base].version
-            RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
-        end
-		RaidCooldownsDB = RaidCooldownsDB or {}
-RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+if cmd == "HELLO" or cmd == "PONG" then
+    RC.senderSeen[base].version = ver or RC.senderSeen[base].version
+    RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
 
-if cmd == "PONG" then
-    -- plugin sends CSV spell list as the 3rd field
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+
     RaidCooldownsDB.senderSpells[base] = hash or ""
-    -- optional: also store by full name in case UI keys by sender-realm
     RaidCooldownsDB.senderSpells[sender] = hash or ""
 
     if InCombatLockdown() then
@@ -1411,9 +1408,9 @@ local NON_HEALER_SPELL_SPECS = {
 }
 
 ------------------------------------------------
--- SPEC FILTER------------------------------------------------
--- SPEC FILTER (SOURCE OF TRUTH)
+-- SPEC FILTER
 ------------------------------------------------
+
 local SPEC_FILTER = {
 
     -- PRIEST
@@ -1858,7 +1855,7 @@ wipe(RC.entries)
 
             if group.class == class then
 
-               local allow = false
+              local allow = false
 
 if unit == "player" then
     if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
@@ -1880,11 +1877,16 @@ if unit == "player" then
     if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
         allow = false
     end
+
 else
-    local baseName = name:gsub("%-.+", "")
-    local csv = RaidCooldownsDB
-        and RaidCooldownsDB.senderSpells
-        and RaidCooldownsDB.senderSpells[baseName]
+    local csv =
+        (RaidCooldownsDB
+            and RaidCooldownsDB.senderSpells
+            and RaidCooldownsDB.senderSpells[baseName])
+        or
+        (RC.senderSeen
+            and RC.senderSeen[baseName]
+            and RC.senderSeen[baseName].hash)
 
     if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
         if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
