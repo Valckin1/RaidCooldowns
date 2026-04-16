@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.1.2"
+local VERSION = "1.1.3"
 
 local TRACKED = {
     -- Druid
@@ -342,7 +342,7 @@ frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("SPELLS_CHANGED")
 frame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
-frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
 
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -374,17 +374,21 @@ frame:SetScript("OnEvent", function(_, event, ...)
         return
     end
 
-    local unit, _, spellID = ...
-    if unit ~= "player" then
-        return
-    end
+   local unit, _, spellID = ...
+if unit ~= "player" and unit ~= "pet" then
+    return
+end
 
-    spellID = tonumber(spellID)
-    if not spellID or not TRACKED[spellID] then
-        return
-    end
+spellID = tonumber(spellID)
+if not spellID or not TRACKED[spellID] then
+    return
+end
 
-    local channel = PickChannel()
- local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+local channel = PickChannel()
+if not channel then
+    return
+end
+
+local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
 Send(PREFIX_SPELLS, tostring(playerName) .. "|" .. tostring(spellID), channel)
 end)
