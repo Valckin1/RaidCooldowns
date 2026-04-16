@@ -281,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.3"
+RC.version = "0.2.4"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -517,9 +517,17 @@ function RegisterSpellcastUnits()
     -- Important: RegisterUnitEvent replaces the unit list each time you call it.
     ev:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
-    local units = { "player" }
-    for idx = 1, 4 do units[#units+1] = "party" .. idx end
-    for idx = 1, 40 do units[#units+1] = "raid" .. idx end
+  local units = { "player", "pet" }
+
+for idx = 1, 4 do
+    units[#units+1] = "party" .. idx
+    units[#units+1] = "partypet" .. idx
+end
+
+for idx = 1, 40 do
+    units[#units+1] = "raid" .. idx
+    units[#units+1] = "raidpet" .. idx
+end
 
     ev:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unpack(units))
 end
@@ -768,14 +776,15 @@ end
 -- SAFE LAYOUT REFRESH (THROTTLED)
 ------------------------------------------------
 function SafeRefreshLayout()
-if RC and RC.dragging then return end
+    if RC and RC.dragging then return end
     if InCombatLockdown() then
         pendingLayoutUpdate = true
         return
     end
 
     UpdateOwners()
-        RegisterSpellcastUnits()
+    RegisterSpellcastUnits()
+    PreCreateAllBars()
     RebuildOrderedList()
     UpdateLayout()
 end
@@ -840,7 +849,8 @@ end
 ------------------------------------------------
 
 
-
+ev:RegisterEvent("ENCOUNTER_START")
+ev:RegisterEvent("ENCOUNTER_END")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_LOGOUT")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -969,6 +979,34 @@ if event == "PLAYER_LOGOUT" then
     return
 end
 
+
+if event == "ENCOUNTER_END" then
+    local encounterID, encounterName, difficultyID, groupSize, success = ...
+
+    -- success == 0 usually means wipe/reset
+    if success == 0 then
+        RaidCooldownsDB = RaidCooldownsDB or {}
+        RaidCooldownsDB.activeCooldowns = RaidCooldownsDB.activeCooldowns or {}
+
+        wipe(RaidCooldownsDB.activeCooldowns)
+
+        for _, entry in ipairs(RC.entries or {}) do
+            entry.onCooldown = false
+            entry.cooldownStart = nil
+            entry.cooldownDuration = nil
+            entry.cooldownEnd = nil
+
+            if entry.bar and entry.bar.cdText then
+                entry.bar.cdText:SetText("READY")
+            end
+        end
+
+        RebuildOrderedList()
+        UpdateLayout()
+    end
+
+    return
+end
 
 if event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 
@@ -1125,7 +1163,6 @@ if cmd == "HELLO" or cmd == "PONG" then
 
     RaidCooldownsDB = RaidCooldownsDB or {}
     RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
-
     RaidCooldownsDB.senderSpells[base] = hash or ""
     RaidCooldownsDB.senderSpells[sender] = hash or ""
 
@@ -1135,7 +1172,7 @@ if cmd == "HELLO" or cmd == "PONG" then
         SafeRefreshLayout()
     end
 end
-    end
+end
 
     -- ✅ Respond to scans (important)
     if cmd == "PING" then
@@ -1179,67 +1216,78 @@ if prefix == "RAIDCD_CLOG" then
         return
     end
 
-     if prefix ~= "RAIDCOOLDOWNS" then return end
-    if RC and RC.debugComms then
-        print("[RaidCooldowns] recv", sender, msg, channel)
-    end
-    if type(msg) ~= "string" or msg == "" then return end
+  if prefix ~= "RAIDCOOLDOWNS" then return end
+if RC and RC.debugComms then
+    print("[RaidCooldowns] recv", sender, msg, channel)
+end
+if type(msg) ~= "string" or msg == "" then return end
 
-    local sourceName, spell = msg:match("^(.-)|(%d+)$")
-    local spellID
+local sourceName, spell = msg:match("^(.-)|(%d+)$")
+local spellID
 
-    if sourceName and spell then
-        spellID = tonumber(spell)
-    else
-        sourceName = sender and string.format("%s", sender) or ""
-        spellID = tonumber(msg)
-    end
+if sourceName and spell then
+    spellID = tonumber(spell)
+else
+    sourceName = sender and string.format("%s", sender) or ""
+    spellID = tonumber(msg)
+end
 
-    if not spellID or not sourceName or sourceName == "" then return end
+if not spellID or not sourceName or sourceName == "" then return end
 
-    local sourceBase = sourceName:gsub("%-.+", "")
+local sourceBase = sourceName:gsub("%-.+", "")
+local senderName = sender and string.format("%s", sender) or ""
+local senderBase = senderName:gsub("%-.+", "")
 
-    for _, entry in ipairs(RC.entries or {}) do
-        if entry.spellID == spellID then
-            local owner = entry.owner and string.format("%s", entry.owner) or ""
-            local ownerBase = owner:gsub("%-.+", "")
+for _, entry in ipairs(RC.entries or {}) do
+    if entry.spellID == spellID then
+        local owner = entry.owner and string.format("%s", entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
 
-            if owner == sourceName or ownerBase == sourceBase then
-                UpdateGroupCooldown(entry)
-            end
+        if owner == sourceName
+        or owner == senderName
+        or ownerBase == sourceBase
+        or ownerBase == senderBase then
+            UpdateGroupCooldown(entry)
         end
     end
+end
 
-    return
+return
 end
 
 if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, castGUID, spellID = ...
 
-    -- Normalize spellID (avoids taint/secret-number comparisons)
     spellID = tonumber(tostring(spellID))
     if not spellID then return end
+    if not unit or not UnitExists(unit) then return end
 
-    if not unit or not spellID then return end
-    if not UnitExists(unit) then return end
+    local ownerUnit = unit
+    if unit == "pet" then
+        ownerUnit = "player"
+    elseif type(unit) == "string" and unit:match("^partypet%d+$") then
+        ownerUnit = unit:gsub("pet", "")
+    elseif type(unit) == "string" and unit:match("^raidpet%d+$") then
+        ownerUnit = unit:gsub("pet", "")
+    end
 
-    local name, realm = UnitName(unit)
+    local name, realm = UnitName(ownerUnit)
     if not name then return end
     if realm and realm ~= "" then
         name = name .. "-" .. realm
     end
-    -- Match owners with or without realm suffix (cross-realm groups)
-    local baseName = string.format("%s", (name:gsub("%-.+", "")))
-    local fullName = string.format("%s", name)
 
-    -- Match correct entry
+    local baseName = tostring(name:gsub("%-.+", ""))
+    local fullName = tostring(name)
+
     for _, entry in ipairs(RC.entries or {}) do
-        local owner = entry.owner and string.format("%s", entry.owner) or ""
+        local owner = entry.owner and tostring(entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
+
         if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
             UpdateGroupCooldown(entry)
-            -- Broadcast my cooldown to other addon users
-            if unit and UnitIsUnit(unit, "player") then
+
+            if ownerUnit and UnitIsUnit(ownerUnit, "player") then
                 if C_ChatInfo and C_ChatInfo.SendAddonMessage then
                     local chan
                     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
@@ -1249,15 +1297,14 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
                     elseif IsInGroup() then
                         chan = "PARTY"
                     end
-                   if chan then
-    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-    C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-    if RC and RC.debugComms then
-        print("[RaidCooldowns] send", playerName, spellID, chan)
-    end
-end
+
+                    if chan then
+                        local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+                        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+                    end
                 end
             end
+
             break
         end
     end
@@ -1855,7 +1902,7 @@ wipe(RC.entries)
 
             if group.class == class then
 
-              local allow = false
+      local allow = false
 
 if unit == "player" then
     if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
@@ -1879,22 +1926,23 @@ if unit == "player" then
     end
 
 else
-    local csv =
-        (RaidCooldownsDB
-            and RaidCooldownsDB.senderSpells
-            and RaidCooldownsDB.senderSpells[baseName])
-        or
-        (RC.senderSeen
-            and RC.senderSeen[baseName]
-            and RC.senderSeen[baseName].hash)
+    local seen = RC.senderSeen and RC.senderSeen[baseName]
+    if seen then
+        local csv =
+            (RaidCooldownsDB
+                and RaidCooldownsDB.senderSpells
+                and RaidCooldownsDB.senderSpells[baseName])
+            or seen.hash
 
-    if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
-        if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
-            allow = true
+        if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
+            local haystack = "," .. csv .. ","
+            local needle = "," .. tostring(spellID) .. ","
+            if haystack:find(needle, 1, true) then
+                allow = true
+            end
         end
     end
 end
-
  
 
 ------------------------------------------------
@@ -7395,7 +7443,7 @@ local function RC_RequestSenderUpdate(base)
   end
 
   local myHash = RC_SenderHashFromDB and RC_SenderHashFromDB() or "EMPTY"
-  local payload = "PING;1.0.0;" .. (myHash or "EMPTY")
+ local payload = "PONG;" .. tostring(RC.version or "0.2.3") .. ";" .. (myHash or "")
 
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
     C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", full)
