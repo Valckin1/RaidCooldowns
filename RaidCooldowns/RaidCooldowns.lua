@@ -848,7 +848,7 @@ end
 -- CLEAN LOGIN BOOTSTRAP (NO ADDON_LOADED)
 ------------------------------------------------
 
-
+ev:RegisterEvent("UNIT_CONNECTION")
 ev:RegisterEvent("ENCOUNTER_START")
 ev:RegisterEvent("ENCOUNTER_END")
 ev:RegisterEvent("PLAYER_LOGIN")
@@ -943,8 +943,8 @@ UpdateLayout()
 UpdateProfileStatusText()
        
         UpdatePanelBackground()
+C_Timer.After(1.0, RC_BroadcastHello)
 
-        -- Register combat log tracking (safe to defer if in combat)
 
         -- 🔥 FORCE SPEC SYNC
         local specIndex = GetSpecialization()
@@ -1063,7 +1063,7 @@ UpdateProfileStatusText()
         UIDropDownMenu_SetText(profileDrop, now)
 
     end)
-
+C_Timer.After(0.25, RC_BroadcastHello)
     return
 end
 
@@ -1109,6 +1109,7 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
         RebuildOrderedList()
         PreCreateAllBars()
         UpdateLayout()
+		C_Timer.After(0.25, RC_BroadcastHello)
         if RC_CleanupPersistedCooldowns then RC_CleanupPersistedCooldowns() end
 
     end)
@@ -1116,12 +1117,13 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
     return
 end
 
-    if event == "GROUP_ROSTER_UPDATE" then
-        RegisterSpellcastUnits()
-	  if RC and RC.dragging then return end
-        SafeRefreshLayout()
-        return
-    end
+   if event == "GROUP_ROSTER_UPDATE" then
+    RegisterSpellcastUnits()
+    if RC and RC.dragging then return end
+    SafeRefreshLayout()
+    C_Timer.After(0.25, RC_BroadcastHello)
+    return
+end
 
     if event == "PLAYER_REGEN_DISABLED" then
         RC.dragging = nil
@@ -1312,19 +1314,15 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
     return
 end
 
-if event == "UNIT_HEALTH" then
-
+if event == "UNIT_HEALTH" or event == "UNIT_CONNECTION" then
     local unit = ...
 
     if not unit then return end
     if not UnitExists(unit) then return end
-
-    -- Only track health for raid/party units (ignore nameplates/boss units)
     if type(unit) ~= "string" then return end
     if not (unit:match("^raid%d+$") or unit:match("^party%d+$") or unit == "player") then return end
 
     local name, realm = UnitName(unit)
-    -- Normalize strings to avoid taint/secret-string comparison issues
     name  = name  and string.format("%s", name)  or ""
     realm = realm and string.format("%s", realm) or ""
     if name == "" then return end
@@ -1332,21 +1330,23 @@ if event == "UNIT_HEALTH" then
     if realm ~= "" then
         name = name .. "-" .. realm
     end
-    -- Match owners with or without realm suffix (cross-realm groups)
+
     local baseName = string.format("%s", (name:gsub("%-.+", "")))
     local fullName = string.format("%s", name)
 
     local isDead = UnitIsDeadOrGhost(unit)
+    local isOffline = not UnitIsConnected(unit)
 
     for _, entry in ipairs(RC.entries or {}) do
         local owner = entry.owner and string.format("%s", entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
-        local ownerBase = owner:gsub("%-.+", "")
+
         if owner == fullName or owner == baseName or ownerBase == baseName then
             entry.isDead = isDead
+            entry.isOffline = isOffline
 
-            if entry.bar then
-                if UpdateDeathVisual then UpdateDeathVisual(entry) end
+            if entry.bar and UpdateDeathVisual then
+                UpdateDeathVisual(entry)
             end
         end
     end
@@ -5415,22 +5415,19 @@ end
 -- UPDATE DEATH VISUAL
 ------------------------------------------------
 UpdateDeathVisual = function(entry)
-
     local bar = entry.bar
     if not bar then return end
 
-    if entry.isDead then
-        -- Grey out
+    if entry.isDead or entry.isOffline then
         bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
         bar.icon:SetVertexColor(0.4, 0.4, 0.4)
         if bar.label then
             RC_SetTextColor(bar.label, 0.6, 0.6, 0.6)
         end
         if bar.cdText then
-            RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
+            RC_SetTextColor(bar.cdText, 0.6, 0.6, 0.6)
         end
     else
-        -- Restore visuals
         ApplyClassColor(bar, entry.class)
         bar.icon:SetVertexColor(1, 1, 1)
         ApplyConfiguredTextColors(bar)
@@ -7268,14 +7265,29 @@ local function RC_PickChannel()
   return nil
 end
 
+
+function RC_BroadcastHello()
+    local chan = RC_PickChannel()
+    if not chan then return end
+
+    local myHash = RC_SenderHashFromDB and RC_SenderHashFromDB() or "EMPTY"
+    local payload = "HELLO;" .. tostring(RC.version or "0.2.4") .. ";" .. (myHash or "EMPTY")
+
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, chan)
+    elseif SendAddonMessage then
+        SendAddonMessage(SENDER_PREFIX, payload, chan)
+    end
+end
+
 local function RC_SendSenderPing()
   local chan = RC_PickChannel()
   if not chan then return end
   local myHash = RC_SenderHashFromDB()
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-    C_ChatInfo.SendAddonMessage(SENDER_PREFIX, "PING;1.0.0;"..myHash, chan)
+  C_ChatInfo.SendAddonMessage(SENDER_PREFIX, "PING;" .. tostring(RC.version or "0.2.4") .. ";" .. myHash, chan)
   elseif SendAddonMessage then
-    SendAddonMessage(SENDER_PREFIX, "PING;1.0.0;"..myHash, chan)
+   SendAddonMessage(SENDER_PREFIX, "PING;" .. tostring(RC.version or "0.2.4") .. ";" .. myHash, chan)
   end
 
 end
