@@ -281,7 +281,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.4"
+RC.version = "0.2.5"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1921,9 +1921,11 @@ if unit == "player" then
         end
     end
 
-    if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
+   if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
+    if not (NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID]) then
         allow = false
     end
+end
 
 else
     local seen = RC.senderSeen and RC.senderSeen[baseName]
