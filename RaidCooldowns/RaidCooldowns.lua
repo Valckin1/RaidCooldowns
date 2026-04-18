@@ -158,9 +158,27 @@ function RC_SenderHashFromDB()
             end
         end
 
-        if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-            allow = false
+       if allow then
+    local known = false
+
+    if IsPlayerSpell and IsPlayerSpell(spellID) then
+        known = true
+    end
+
+    if not known and IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(spellID) then
+        known = true
+    end
+
+    if not known and spellID == 272678 then
+        if select(2, UnitClass("player")) == "HUNTER" and UnitExists("pet") then
+            known = true
         end
+    end
+
+    if not known then
+        allow = false
+    end
+end
 
         if allow then
             ids[#ids + 1] = tonumber(spellID)
@@ -279,7 +297,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.6"
+RC.version = "0.2.8"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -513,7 +531,10 @@ function RegisterSpellcastUnits()
     -- Important: RegisterUnitEvent replaces the unit list each time you call it.
     ev:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
-    local units = { "player" }
+   local units = {
+    "player",
+    "pet",
+}
     for idx = 1, 4 do units[#units+1] = "party" .. idx end
     for idx = 1, 40 do units[#units+1] = "raid" .. idx end
 
@@ -1043,38 +1064,40 @@ if event == "CHAT_MSG_ADDON" then
         RC.senderSeen[base] = RC.senderSeen[base] or {}
         RC.senderSeen[base].lastSeen = RC_Now()
 
-        if cmd == "HELLO" or cmd == "PONG" then
-            RC.senderSeen[base].version = ver or RC.senderSeen[base].version
-            RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
-        end
-		RaidCooldownsDB = RaidCooldownsDB or {}
-RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+    if cmd == "HELLO" or cmd == "PONG" then
+    RC.senderSeen[base].version = ver or RC.senderSeen[base].version
+    RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
 
-if cmd == "PONG" then
-    -- plugin sends CSV spell list as the 3rd field
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
     RaidCooldownsDB.senderSpells[base] = hash or ""
-    -- optional: also store by full name in case UI keys by sender-realm
     RaidCooldownsDB.senderSpells[sender] = hash or ""
 
     if InCombatLockdown() then
         pendingLayoutUpdate = true
     else
-        SafeRefreshLayout()
+        CreateGroups()
+        UpdateOwners()
+        PreCreateAllBars()
+        RebuildOrderedList()
+        UpdateLayout()
     end
 end
+
+
     end
 
     -- ✅ Respond to scans (important)
-    if cmd == "PING" then
-        local myHash = RC_SenderHashFromDB()
-local payload = "PONG;" .. tostring(RC.version) .. ";" .. (myHash or "")
+if cmd == "PING" then
+    local myCSV = (RC_GetLocalOwnedSenderCSV and RC_GetLocalOwnedSenderCSV()) or "EMPTY"
+    local payload = "PONG;" .. tostring(RC.version) .. ";" .. (myCSV or "EMPTY")
 
-        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-            C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", sender)
-        elseif SendAddonMessage then
-            SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", sender)
-        end
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", sender)
+    elseif SendAddonMessage then
+        SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", sender)
     end
+end
 
     if RC.spellsSenderUI and RC.spellsSenderUI.RefreshSenderList then
         RC.spellsSenderUI.RefreshSenderList()
@@ -1124,18 +1147,35 @@ if prefix == "RAIDCD_CLOG" then
 
     if not spellID or not sourceName or sourceName == "" then return end
 
-    local sourceBase = sourceName:gsub("%-.+", "")
+  local sourceBase = sourceName:gsub("%-.+", "")
+local senderName = sender and string.format("%s", sender) or ""
+local senderBase = senderName:gsub("%-.+", "")
 
-    for _, entry in ipairs(RC.entries or {}) do
-        if entry.spellID == spellID then
-            local owner = entry.owner and string.format("%s", entry.owner) or ""
-            local ownerBase = owner:gsub("%-.+", "")
+local matched = false
 
-            if owner == sourceName or ownerBase == sourceBase then
-                UpdateGroupCooldown(entry)
-            end
+for _, entry in ipairs(RC.entries or {}) do
+    if entry.spellID == spellID then
+        local owner = entry.owner and string.format("%s", entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+
+        if owner == sourceName
+        or owner == senderName
+        or ownerBase == sourceBase
+        or ownerBase == senderBase then
+            UpdateGroupCooldown(entry)
+            matched = true
         end
     end
+end
+
+if matched then
+    if InCombatLockdown() then
+        pendingLayoutUpdate = true
+    else
+        RebuildOrderedList()
+        UpdateLayout()
+    end
+end
 
     return
 end
@@ -1150,14 +1190,16 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
     if not unit or not spellID then return end
     if not UnitExists(unit) then return end
 
+   local fullName = (GetUnitName and GetUnitName(unit, true)) or nil
+if not fullName or fullName == "" then
     local name, realm = UnitName(unit)
     if not name then return end
+    fullName = name
     if realm and realm ~= "" then
-        name = name .. "-" .. realm
+        fullName = fullName .. "-" .. realm
     end
-    -- Match owners with or without realm suffix (cross-realm groups)
-    local baseName = string.format("%s", (name:gsub("%-.+", "")))
-    local fullName = string.format("%s", name)
+end
+local baseName = tostring(fullName:gsub("%-.+", ""))
 
     -- Match correct entry
     for _, entry in ipairs(RC.entries or {}) do
@@ -1166,7 +1208,7 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
         if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
             UpdateGroupCooldown(entry)
             -- Broadcast my cooldown to other addon users
-            if unit and UnitIsUnit(unit, "player") then
+if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
                 if C_ChatInfo and C_ChatInfo.SendAddonMessage then
                     local chan
                     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
@@ -1753,20 +1795,25 @@ wipe(RC.entries)
     -- UNIT CHECK
     ------------------------------------------------
     local function CheckUnit(unit)
+	
 
         if not UnitExists(unit) then return end
 
-        local name, realm = UnitName(unit)
-        if not name then return end
-        if realm and realm ~= "" then
-            name = name .. "-" .. realm
-        end
-    -- Match owners with or without realm suffix (cross-realm groups)
-    local baseName = string.format("%s", (name:gsub("%-.+", "")))
-    local fullName = string.format("%s", name)
+local name = (GetUnitName and GetUnitName(unit, true)) or nil
+if not name or name == "" then
+    local n, realm = UnitName(unit)
+    if not n then return end
+    name = n
+    if realm and realm ~= "" then
+        name = name .. "-" .. realm
+    end
+end
+
+local baseName = tostring(name:gsub("%-.+", ""))
 
         local _, class = UnitClass(unit)
         if not class then return end
+		
 
         local specID
         if unit == "player" then
@@ -1780,15 +1827,27 @@ wipe(RC.entries)
 
             if group.class == class then
 
-                local allow = false
+               local allow = false
+
+if unit ~= "player" then
+    local csv = RaidCooldownsDB
+        and RaidCooldownsDB.senderSpells
+        and RaidCooldownsDB.senderSpells[baseName]
+
+    if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
+        if ("," .. csv .. ","):find("," .. tostring(spellID) .. ",", 1, true) then
+            allow = true
+        end
+    end
+end
 
                 ------------------------------------------------
                 -- HEALER SPELLS
                 ------------------------------------------------
-if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
+if not allow and ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
     allow = true
 
-elseif HEALER_ONLY and HEALER_ONLY[spellID] then
+elseif not allow and HEALER_ONLY and HEALER_ONLY[spellID] then
     if unit == "player" then
         if SPEC_FILTER and SPEC_FILTER[spellID] then
             if specID and SPEC_FILTER[spellID][specID] then
@@ -1796,25 +1855,39 @@ elseif HEALER_ONLY and HEALER_ONLY[spellID] then
             end
         end
     else
-        if UnitGroupRolesAssigned(unit) == "HEALER" then
-            allow = true
-        end
-    end
-
-elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
-    if unit == "player" then
-        if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
-            allow = true
-        end
-    else
-        local baseName = name:gsub("%-.+", "")
         local csv = RaidCooldownsDB
             and RaidCooldownsDB.senderSpells
             and RaidCooldownsDB.senderSpells[baseName]
 
         if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
-            if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
+            if ("," .. csv .. ","):find("," .. tostring(spellID) .. ",", 1, true) then
                 allow = true
+            end
+        elseif UnitGroupRolesAssigned(unit) == "HEALER" then
+            allow = true
+        end
+    end
+
+elseif not allow and NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
+    if unit == "player" then
+        if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
+            allow = true
+        end
+    else
+        local csv = RaidCooldownsDB
+            and RaidCooldownsDB.senderSpells
+            and RaidCooldownsDB.senderSpells[baseName]
+
+        if unit == "raid1" then
+            print("|cff33ff99RC NonHealerCSV|r", "spellID=", tostring(spellID), "csv=", tostring(csv))
+        end
+
+        if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
+            if ("," .. csv .. ","):find("," .. tostring(spellID) .. ",", 1, true) then
+                allow = true
+                if unit == "raid1" then
+                    print("|cff33ff99RC NonHealerMATCH|r", "spellID=", tostring(spellID))
+                end
             end
         end
     end
@@ -1824,24 +1897,41 @@ end
 -- FINAL TALENT CHECK (PLAYER ONLY)
 ------------------------------------------------
 if allow and unit == "player" then
-    if not IsPlayerSpell(spellID) then
+    local known = false
+
+    if IsPlayerSpell and IsPlayerSpell(spellID) then
+        known = true
+    end
+
+    if not known and IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(spellID) then
+        known = true
+    end
+
+    if not known and spellID == 272678 then
+        if select(2, UnitClass("player")) == "HUNTER" and UnitExists("pet") then
+            known = true
+        end
+    end
+
+    if not known then
         allow = false
     end
 end
 
 -- ONLY SHOW OTHER PLAYERS IF THEY WERE CONFIRMED BY FULL ADDON / CLIENT PLUGIN
 if allow and unit ~= "player" then
-    local baseName = name:gsub("%-.+", "")
-    local hasSpellList =
+local hasSpellList =
         RaidCooldownsDB
         and RaidCooldownsDB.senderSpells
         and RaidCooldownsDB.senderSpells[baseName]
-        and RaidCooldownsDB.senderSpells[baseName] ~= ""
+       and RaidCooldownsDB.senderSpells[baseName] ~= ""
+and RaidCooldownsDB.senderSpells[baseName] ~= "EMPTY"
 
     if not hasSpellList then
         allow = false
     end
 end
+
 
 ------------------------------------------------
 -- ADD ENTRY
@@ -1872,6 +1962,7 @@ local restoredEntry = {
 if RC_RestoreCooldownState then
     RC_RestoreCooldownState(restoredEntry)
 end
+
 table.insert(RC.entries, restoredEntry)
 RC._usedBars[key] = true
                 end
@@ -2264,6 +2355,16 @@ RaidCooldownsDB.profiles[name] = RaidCooldownsDB.profiles[name] or {
 
 
     return RaidCooldownsDB.profiles[name]
+end
+
+local function SaveProfileSetting(key, value)
+    RaidCooldownsDB.settings[key] = value
+
+    local profile = GetProfile()
+    if profile then
+        profile.settings = profile.settings or {}
+        profile.settings[key] = value
+    end
 end
 
 ------------------------------------------------
@@ -2970,7 +3071,7 @@ barWidth.High:SetText("320")
 AddSliderValueText(barWidth)
 barWidth:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-    RaidCooldownsDB.settings.barWidth = value
+SaveProfileSetting("barWidth", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -2991,7 +3092,7 @@ barHeight.High:SetText("40")
 AddSliderValueText(barHeight)
 barHeight:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-    RaidCooldownsDB.settings.barHeight = value
+SaveProfileSetting("barHeight", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3012,7 +3113,7 @@ barSpacing.High:SetText("20")
 AddSliderValueText(barSpacing)
 barSpacing:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-    RaidCooldownsDB.settings.barSpacing = value
+SaveProfileSetting("barSpacing", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3032,7 +3133,7 @@ spellTextX.High:SetText("50")
 AddSliderValueText(spellTextX)
 spellTextX:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-   RaidCooldownsDB.settings.spellTextOffsetX = value
+SaveProfileSetting("spellTextOffsetX", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3052,7 +3153,7 @@ spellTextY.High:SetText("20")
 AddSliderValueText(spellTextY)
 spellTextY:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-    RaidCooldownsDB.settings.spellTextOffsetY = value
+SaveProfileSetting("spellTextOffsetY", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3072,7 +3173,7 @@ spellTextSize.High:SetText("24")
 AddSliderValueText(spellTextSize)
 spellTextSize:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-    RaidCooldownsDB.settings.spellTextSize = value
+SaveProfileSetting("spellTextSize", value)
 
     local profile = GetProfile()
     if profile then
@@ -3099,7 +3200,7 @@ cdTextX.High:SetText("50")
 AddSliderValueText(cdTextX)
 cdTextX:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-   RaidCooldownsDB.settings.cdTextOffsetX = value
+SaveProfileSetting("cdTextOffsetX", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3119,7 +3220,7 @@ cdTextY.High:SetText("20")
 AddSliderValueText(cdTextY)
 cdTextY:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-   RaidCooldownsDB.settings.cdTextOffsetY = value
+SaveProfileSetting("cdTextOffsetY", value)
     self:UpdateValueText(value)
     UpdateLayout()
 end)
@@ -3139,7 +3240,7 @@ cdTextSize.High:SetText("24")
 AddSliderValueText(cdTextSize)
 cdTextSize:SetScript("OnValueChanged", function(self, value)
     value = math.floor(value)
-    RaidCooldownsDB.settings.cdTextSize = value
+SaveProfileSetting("cdTextSize", value)
 
     local profile = GetProfile()
     if profile then
@@ -3446,15 +3547,22 @@ reset:SetText("Reset Layout")
 
 
 reset:SetScript("OnClick", function()
-    RaidCooldownsDB.settings.barWidth   = 180
-    RaidCooldownsDB.settings.barHeight  = 18
-    RaidCooldownsDB.settings.barSpacing = 6
-    RaidCooldownsDB.settings.centerBars = true
+    SaveProfileSetting("barWidth", 180)
+    SaveProfileSetting("barHeight", 18)
+    SaveProfileSetting("barSpacing", 6)
+    SaveProfileSetting("centerBars", true)
 
     RaidCooldownsDB.layout.width  = 360
     RaidCooldownsDB.layout.height = 300
-    panel:SetSize(360, 300)
 
+    local profile = GetProfile()
+    if profile then
+        profile.layout = profile.layout or {}
+        profile.layout.width = 360
+        profile.layout.height = 300
+    end
+
+    panel:SetSize(360, 300)
     UpdateLayout()
 end)
 
@@ -3465,7 +3573,7 @@ NormalizeCheckButton(center)
 center.Text:SetText("Center Bars")
 center:SetChecked(RaidCooldownsDB.settings.centerBars)
 center:SetScript("OnClick", function(self)
-    RaidCooldownsDB.settings.centerBars = self:GetChecked()
+SaveProfileSetting("centerBars", self:GetChecked())
     UpdateLayout()
 end)
 
