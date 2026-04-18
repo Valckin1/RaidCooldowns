@@ -159,10 +159,8 @@ function RC_SenderHashFromDB()
         end
 
         if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-    if not (NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID]) then
-        allow = false
-    end
-end
+            allow = false
+        end
 
         if allow then
             ids[#ids + 1] = tonumber(spellID)
@@ -281,7 +279,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.5"
+RC.version = "0.2.6"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -483,25 +481,23 @@ function IsSpellTracked(spellID)
     if not t then return true end  -- default: tracked
     return t[spellID] ~= false     -- nil/true => tracked, false => untracked
 end
-function ShouldDisplaySpell(entry)
 
+
+function ShouldDisplaySpell(entry)
     if not entry then
         return false
     end
 
-    -- Test mode shows everything
-    if RC.testMode then
-        return true
-    end
-
-    -- Must be tracked
     if not IsSpellTracked(entry.spellID) then
         return false
     end
 
+    if RC.testMode then
+        return true
+    end
+
     return true
 end
-
 
 
 
@@ -517,17 +513,9 @@ function RegisterSpellcastUnits()
     -- Important: RegisterUnitEvent replaces the unit list each time you call it.
     ev:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
-  local units = { "player", "pet" }
-
-for idx = 1, 4 do
-    units[#units+1] = "party" .. idx
-    units[#units+1] = "partypet" .. idx
-end
-
-for idx = 1, 40 do
-    units[#units+1] = "raid" .. idx
-    units[#units+1] = "raidpet" .. idx
-end
+    local units = { "player" }
+    for idx = 1, 4 do units[#units+1] = "party" .. idx end
+    for idx = 1, 40 do units[#units+1] = "raid" .. idx end
 
     ev:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unpack(units))
 end
@@ -602,29 +590,21 @@ end
 -- GET TEMPLATE STORAGE
 ------------------------------------------------
 function GetTemplateStorage()
-
     local profile  = GetProfile()
     local template = RaidCooldownsDB.settings.template
 
     profile.templateOrders = profile.templateOrders or {}
 
-    ------------------------------------------------
-    -- Ensure template key exists
-    ------------------------------------------------
     if type(profile.templateOrders[template]) ~= "table" then
         profile.templateOrders[template] = {
-            order   = {},
-            columns = {}
+            order = {},
+            group = {},
         }
     end
 
     local storage = profile.templateOrders[template]
-
-    ------------------------------------------------
-    -- Ensure sub-tables exist
-    ------------------------------------------------
-    storage.order   = storage.order   or {}
-    storage.columns = storage.columns or {}
+    storage.order = storage.order or {}
+    storage.group = storage.group or {}
 
     return storage
 end
@@ -634,58 +614,40 @@ end
 -- ENSURE TEMPLATE ORDER INITIALIZED 
 ------------------------------------------------
 function EnsureTemplateOrderInitialized(storage)
-    storage.order   = storage.order   or {}
-    storage.columns = storage.columns or {}
+    storage.order = storage.order or {}
+    storage.group = storage.group or {}
 
-    local template = RaidCooldownsDB.settings.template
-    local maxCols  = tonumber(RaidCooldownsDB.settings.columns) or 3
+    local maxOrder = { [1] = 0, [2] = 0, [3] = 0 }
 
-    -- Find max existing order index (non-column)
-    local maxOrder = 0
-    for _, v in pairs(storage.order) do
-        if type(v) == "number" and v > maxOrder then
-            maxOrder = v
+    for spellID, ord in pairs(storage.order) do
+        local g = tonumber(storage.group[spellID]) or 1
+        if g < 1 or g > 3 then g = 1 end
+        if type(ord) == "number" and ord > maxOrder[g] then
+            maxOrder[g] = ord
         end
     end
 
-    if template == "COLUMN_LIST" then
-        local colMax = {}
-        for c = 1, maxCols do colMax[c] = 0 end
-
-        -- pass 1: find max per column from existing storage
-        for spellID, ord in pairs(storage.order) do
-            local col = tonumber(storage.columns[spellID]) or 1
-            if col < 1 or col > maxCols then col = 1 end
-
-            if type(ord) == "number" and ord > (colMax[col] or 0) then
-                colMax[col] = ord
-            end
-        end
-
-        -- pass 2: assign missing column/order for every entry we might show
-        for _, e in ipairs(RC.entries or {}) do
-            local id = e.spellID
-            if id then
-                local col = tonumber(storage.columns[id]) or tonumber(e.column) or 1
-                if col < 1 or col > maxCols then col = 1 end
-
-                storage.columns[id] = col
-                e.column = col
-
-                if type(storage.order[id]) ~= "number" then
-                    colMax[col] = (colMax[col] or 0) + 1
-                    storage.order[id] = colMax[col]
+    for _, e in ipairs(RC.entries or {}) do
+        local id = e.spellID
+        if id then
+            local g = tonumber(storage.group[id])
+            if not g or g < 1 or g > 3 then
+                local cat = e.category or ""
+                if cat == "raid" then
+                    g = 1
+                elseif cat == "external" then
+                    g = 2
+                else
+                    g = 3
                 end
+                storage.group[id] = g
             end
-        end
 
-    else
-        -- single list mode
-        for _, e in ipairs(RC.entries or {}) do
-            local id = e.spellID
-            if id and type(storage.order[id]) ~= "number" then
-                maxOrder = maxOrder + 1
-                storage.order[id] = maxOrder
+            e.group = g
+
+            if type(storage.order[id]) ~= "number" then
+                maxOrder[g] = maxOrder[g] + 1
+                storage.order[id] = maxOrder[g]
             end
         end
     end
@@ -695,93 +657,46 @@ end
 -- RebuildOrderedList (CLEAN / STABLE)
 ------------------------------------------------
 RebuildOrderedList = function()
-    RC_Debug("RebuildOrderedList running")
     if not RC then return end
 
     RC.entries = RC.entries or {}
     RC.ordered = RC.ordered or {}
     wipe(RC.ordered)
 
-    local template = RaidCooldownsDB.settings.template
-    local storage  = GetTemplateStorage()
+    local storage = GetTemplateStorage()
     EnsureTemplateOrderInitialized(storage)
 
-    ------------------------------------------------
-    -- COLUMN LIST MODE
-    ------------------------------------------------
-    if template == "COLUMN_LIST" then
-        -- IMPORTANT: force numeric
-        local maxColumns = tonumber(RaidCooldownsDB.settings.columns) or 3
-        storage.columns = storage.columns or {}
-
-        local columns = {}
-        for i = 1, maxColumns do
-            columns[i] = {}
-        end
-
-        for _, entry in ipairs(RC.entries) do
-            if ShouldDisplaySpell(entry) then
-                local col = tonumber(storage.columns[entry.spellID]) or 1
-                if col < 1 or col > maxColumns then col = 1 end
-
-                entry.column = col
-
-                RC_Debug(("KEEP(column): %s (%d) tracked=%s"):format(
-                    entry.name or "?", entry.spellID or -1, tostring(IsSpellTracked(entry.spellID))
-                ))
-
-                table.insert(columns[col], entry)
-            else
-                RC_Debug(("DROP(column): %s (%d) tracked=%s"):format(
-                    entry.name or "?", entry.spellID or -1, tostring(IsSpellTracked(entry.spellID))
-                ))
-            end
-        end
-
-        -- sort each column then append into RC.ordered
-        for col = 1, maxColumns do
-            table.sort(columns[col], function(a, b)
-                return (storage.order[a.spellID] or 9999) < (storage.order[b.spellID] or 9999)
-            end)
-
-            for _, entry in ipairs(columns[col]) do
-                table.insert(RC.ordered, entry)
-            end
-        end
-
-        return
-    end
-
-    ------------------------------------------------
-    -- NON COLUMN MODE (ICON_BAR, BAR_ONLY, etc.)
-    ------------------------------------------------
     for _, entry in ipairs(RC.entries) do
         if ShouldDisplaySpell(entry) then
-            RC_Debug(("KEEP: %s (%d) tracked=%s"):format(
-                entry.name or "?", entry.spellID or -1, tostring(IsSpellTracked(entry.spellID))
-            ))
+            entry.group = tonumber(storage.group[entry.spellID]) or 1
+            if entry.group < 1 or entry.group > 3 then
+                entry.group = 1
+            end
             table.insert(RC.ordered, entry)
-        else
-            RC_Debug(("DROP: %s (%d) tracked=%s"):format(
-                entry.name or "?", entry.spellID or -1, tostring(IsSpellTracked(entry.spellID))
-            ))
         end
     end
 
     table.sort(RC.ordered, function(a, b)
+        local ga = tonumber(storage.group[a.spellID]) or 1
+        local gb = tonumber(storage.group[b.spellID]) or 1
+        if ga ~= gb then
+            return ga < gb
+        end
         return (storage.order[a.spellID] or 9999) < (storage.order[b.spellID] or 9999)
     end)
 end
+
 ------------------------------------------------
 -- SAFE LAYOUT REFRESH (THROTTLED)
 ------------------------------------------------
 function SafeRefreshLayout()
-    if RC and RC.dragging then return end
+if RC and RC.dragging then return end
     if InCombatLockdown() then
         pendingLayoutUpdate = true
         return
     end
 
+    CreateGroups()
     UpdateOwners()
     RegisterSpellcastUnits()
     PreCreateAllBars()
@@ -848,9 +763,8 @@ end
 -- CLEAN LOGIN BOOTSTRAP (NO ADDON_LOADED)
 ------------------------------------------------
 
-ev:RegisterEvent("UNIT_CONNECTION")
-ev:RegisterEvent("ENCOUNTER_START")
-ev:RegisterEvent("ENCOUNTER_END")
+
+
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_LOGOUT")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -943,8 +857,8 @@ UpdateLayout()
 UpdateProfileStatusText()
        
         UpdatePanelBackground()
-C_Timer.After(1.0, RC_BroadcastHello)
 
+        -- Register combat log tracking (safe to defer if in combat)
 
         -- 🔥 FORCE SPEC SYNC
         local specIndex = GetSpecialization()
@@ -979,34 +893,6 @@ if event == "PLAYER_LOGOUT" then
     return
 end
 
-
-if event == "ENCOUNTER_END" then
-    local encounterID, encounterName, difficultyID, groupSize, success = ...
-
-    -- success == 0 usually means wipe/reset
-    if success == 0 then
-        RaidCooldownsDB = RaidCooldownsDB or {}
-        RaidCooldownsDB.activeCooldowns = RaidCooldownsDB.activeCooldowns or {}
-
-        wipe(RaidCooldownsDB.activeCooldowns)
-
-        for _, entry in ipairs(RC.entries or {}) do
-            entry.onCooldown = false
-            entry.cooldownStart = nil
-            entry.cooldownDuration = nil
-            entry.cooldownEnd = nil
-
-            if entry.bar and entry.bar.cdText then
-                entry.bar.cdText:SetText("READY")
-            end
-        end
-
-        RebuildOrderedList()
-        UpdateLayout()
-    end
-
-    return
-end
 
 if event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 
@@ -1063,7 +949,7 @@ UpdateProfileStatusText()
         UIDropDownMenu_SetText(profileDrop, now)
 
     end)
-C_Timer.After(0.25, RC_BroadcastHello)
+
     return
 end
 
@@ -1109,7 +995,6 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
         RebuildOrderedList()
         PreCreateAllBars()
         UpdateLayout()
-		C_Timer.After(0.25, RC_BroadcastHello)
         if RC_CleanupPersistedCooldowns then RC_CleanupPersistedCooldowns() end
 
     end)
@@ -1117,13 +1002,12 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
     return
 end
 
-   if event == "GROUP_ROSTER_UPDATE" then
-    RegisterSpellcastUnits()
-    if RC and RC.dragging then return end
-    SafeRefreshLayout()
-    C_Timer.After(0.25, RC_BroadcastHello)
-    return
-end
+    if event == "GROUP_ROSTER_UPDATE" then
+        RegisterSpellcastUnits()
+	  if RC and RC.dragging then return end
+        SafeRefreshLayout()
+        return
+    end
 
     if event == "PLAYER_REGEN_DISABLED" then
         RC.dragging = nil
@@ -1159,13 +1043,17 @@ if event == "CHAT_MSG_ADDON" then
         RC.senderSeen[base] = RC.senderSeen[base] or {}
         RC.senderSeen[base].lastSeen = RC_Now()
 
-if cmd == "HELLO" or cmd == "PONG" then
-    RC.senderSeen[base].version = ver or RC.senderSeen[base].version
-    RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
+        if cmd == "HELLO" or cmd == "PONG" then
+            RC.senderSeen[base].version = ver or RC.senderSeen[base].version
+            RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
+        end
+		RaidCooldownsDB = RaidCooldownsDB or {}
+RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
 
-    RaidCooldownsDB = RaidCooldownsDB or {}
-    RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
+if cmd == "PONG" then
+    -- plugin sends CSV spell list as the 3rd field
     RaidCooldownsDB.senderSpells[base] = hash or ""
+    -- optional: also store by full name in case UI keys by sender-realm
     RaidCooldownsDB.senderSpells[sender] = hash or ""
 
     if InCombatLockdown() then
@@ -1174,7 +1062,7 @@ if cmd == "HELLO" or cmd == "PONG" then
         SafeRefreshLayout()
     end
 end
-end
+    end
 
     -- ✅ Respond to scans (important)
     if cmd == "PING" then
@@ -1218,78 +1106,67 @@ if prefix == "RAIDCD_CLOG" then
         return
     end
 
-  if prefix ~= "RAIDCOOLDOWNS" then return end
-if RC and RC.debugComms then
-    print("[RaidCooldowns] recv", sender, msg, channel)
-end
-if type(msg) ~= "string" or msg == "" then return end
+     if prefix ~= "RAIDCOOLDOWNS" then return end
+    if RC and RC.debugComms then
+        print("[RaidCooldowns] recv", sender, msg, channel)
+    end
+    if type(msg) ~= "string" or msg == "" then return end
 
-local sourceName, spell = msg:match("^(.-)|(%d+)$")
-local spellID
+    local sourceName, spell = msg:match("^(.-)|(%d+)$")
+    local spellID
 
-if sourceName and spell then
-    spellID = tonumber(spell)
-else
-    sourceName = sender and string.format("%s", sender) or ""
-    spellID = tonumber(msg)
-end
+    if sourceName and spell then
+        spellID = tonumber(spell)
+    else
+        sourceName = sender and string.format("%s", sender) or ""
+        spellID = tonumber(msg)
+    end
 
-if not spellID or not sourceName or sourceName == "" then return end
+    if not spellID or not sourceName or sourceName == "" then return end
 
-local sourceBase = sourceName:gsub("%-.+", "")
-local senderName = sender and string.format("%s", sender) or ""
-local senderBase = senderName:gsub("%-.+", "")
+    local sourceBase = sourceName:gsub("%-.+", "")
 
-for _, entry in ipairs(RC.entries or {}) do
-    if entry.spellID == spellID then
-        local owner = entry.owner and string.format("%s", entry.owner) or ""
-        local ownerBase = owner:gsub("%-.+", "")
+    for _, entry in ipairs(RC.entries or {}) do
+        if entry.spellID == spellID then
+            local owner = entry.owner and string.format("%s", entry.owner) or ""
+            local ownerBase = owner:gsub("%-.+", "")
 
-        if owner == sourceName
-        or owner == senderName
-        or ownerBase == sourceBase
-        or ownerBase == senderBase then
-            UpdateGroupCooldown(entry)
+            if owner == sourceName or ownerBase == sourceBase then
+                UpdateGroupCooldown(entry)
+            end
         end
     end
-end
 
-return
+    return
 end
 
 if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, castGUID, spellID = ...
 
+    -- Normalize spellID (avoids taint/secret-number comparisons)
     spellID = tonumber(tostring(spellID))
     if not spellID then return end
-    if not unit or not UnitExists(unit) then return end
 
-    local ownerUnit = unit
-    if unit == "pet" then
-        ownerUnit = "player"
-    elseif type(unit) == "string" and unit:match("^partypet%d+$") then
-        ownerUnit = unit:gsub("pet", "")
-    elseif type(unit) == "string" and unit:match("^raidpet%d+$") then
-        ownerUnit = unit:gsub("pet", "")
-    end
+    if not unit or not spellID then return end
+    if not UnitExists(unit) then return end
 
-    local name, realm = UnitName(ownerUnit)
+    local name, realm = UnitName(unit)
     if not name then return end
     if realm and realm ~= "" then
         name = name .. "-" .. realm
     end
+    -- Match owners with or without realm suffix (cross-realm groups)
+    local baseName = string.format("%s", (name:gsub("%-.+", "")))
+    local fullName = string.format("%s", name)
 
-    local baseName = tostring(name:gsub("%-.+", ""))
-    local fullName = tostring(name)
-
+    -- Match correct entry
     for _, entry in ipairs(RC.entries or {}) do
-        local owner = entry.owner and tostring(entry.owner) or ""
+        local owner = entry.owner and string.format("%s", entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
-
         if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
             UpdateGroupCooldown(entry)
-
-            if ownerUnit and UnitIsUnit(ownerUnit, "player") then
+            -- Broadcast my cooldown to other addon users
+            if unit and UnitIsUnit(unit, "player") then
                 if C_ChatInfo and C_ChatInfo.SendAddonMessage then
                     local chan
                     if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
@@ -1299,14 +1176,15 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
                     elseif IsInGroup() then
                         chan = "PARTY"
                     end
-
-                    if chan then
-                        local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-                        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-                    end
+                   if chan then
+    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+    C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+    if RC and RC.debugComms then
+        print("[RaidCooldowns] send", playerName, spellID, chan)
+    end
+end
                 end
             end
-
             break
         end
     end
@@ -1314,15 +1192,19 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
     return
 end
 
-if event == "UNIT_HEALTH" or event == "UNIT_CONNECTION" then
+if event == "UNIT_HEALTH" then
+
     local unit = ...
 
     if not unit then return end
     if not UnitExists(unit) then return end
+
+    -- Only track health for raid/party units (ignore nameplates/boss units)
     if type(unit) ~= "string" then return end
     if not (unit:match("^raid%d+$") or unit:match("^party%d+$") or unit == "player") then return end
 
     local name, realm = UnitName(unit)
+    -- Normalize strings to avoid taint/secret-string comparison issues
     name  = name  and string.format("%s", name)  or ""
     realm = realm and string.format("%s", realm) or ""
     if name == "" then return end
@@ -1330,23 +1212,21 @@ if event == "UNIT_HEALTH" or event == "UNIT_CONNECTION" then
     if realm ~= "" then
         name = name .. "-" .. realm
     end
-
+    -- Match owners with or without realm suffix (cross-realm groups)
     local baseName = string.format("%s", (name:gsub("%-.+", "")))
     local fullName = string.format("%s", name)
 
     local isDead = UnitIsDeadOrGhost(unit)
-    local isOffline = not UnitIsConnected(unit)
 
     for _, entry in ipairs(RC.entries or {}) do
         local owner = entry.owner and string.format("%s", entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
-
+        local ownerBase = owner:gsub("%-.+", "")
         if owner == fullName or owner == baseName or ownerBase == baseName then
             entry.isDead = isDead
-            entry.isOffline = isOffline
 
-            if entry.bar and UpdateDeathVisual then
-                UpdateDeathVisual(entry)
+            if entry.bar then
+                if UpdateDeathVisual then UpdateDeathVisual(entry) end
             end
         end
     end
@@ -1455,9 +1335,9 @@ local NON_HEALER_SPELL_SPECS = {
 }
 
 ------------------------------------------------
--- SPEC FILTER
+-- SPEC FILTER------------------------------------------------
+-- SPEC FILTER (SOURCE OF TRUTH)
 ------------------------------------------------
-
 local SPEC_FILTER = {
 
     -- PRIEST
@@ -1530,11 +1410,9 @@ function RC_SenderHashFromDB()
             allow = false
         end
 
-if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-    if not (NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID]) then
-        allow = false
-    end
-end
+        if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
+            allow = false
+        end
 
         if allow then
             ids[#ids + 1] = tonumber(spellID)
@@ -1902,50 +1780,68 @@ wipe(RC.entries)
 
             if group.class == class then
 
-      local allow = false
+                local allow = false
 
-if unit == "player" then
-    if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
-        allow = true
+                ------------------------------------------------
+                -- HEALER SPELLS
+                ------------------------------------------------
+if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
+    allow = true
 
-    elseif HEALER_ONLY and HEALER_ONLY[spellID] then
+elseif HEALER_ONLY and HEALER_ONLY[spellID] then
+    if unit == "player" then
         if SPEC_FILTER and SPEC_FILTER[spellID] then
             if specID and SPEC_FILTER[spellID][specID] then
                 allow = true
             end
         end
-
-    elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
-        if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
+    else
+        if UnitGroupRolesAssigned(unit) == "HEALER" then
             allow = true
         end
     end
 
-   if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-    if not (NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID]) then
-        allow = false
-    end
-end
-
-else
-    local seen = RC.senderSeen and RC.senderSeen[baseName]
-    if seen then
-        local csv =
-            (RaidCooldownsDB
-                and RaidCooldownsDB.senderSpells
-                and RaidCooldownsDB.senderSpells[baseName])
-            or seen.hash
+elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
+    if unit == "player" then
+        if specID and NON_HEALER_SPELL_SPECS[spellID][specID] then
+            allow = true
+        end
+    else
+        local baseName = name:gsub("%-.+", "")
+        local csv = RaidCooldownsDB
+            and RaidCooldownsDB.senderSpells
+            and RaidCooldownsDB.senderSpells[baseName]
 
         if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
-            local haystack = "," .. csv .. ","
-            local needle = "," .. tostring(spellID) .. ","
-            if haystack:find(needle, 1, true) then
+            if csv:match("(^|,)" .. tostring(spellID) .. "(,|$)") then
                 allow = true
             end
         end
     end
 end
- 
+
+               ------------------------------------------------
+-- FINAL TALENT CHECK (PLAYER ONLY)
+------------------------------------------------
+if allow and unit == "player" then
+    if not IsPlayerSpell(spellID) then
+        allow = false
+    end
+end
+
+-- ONLY SHOW OTHER PLAYERS IF THEY WERE CONFIRMED BY FULL ADDON / CLIENT PLUGIN
+if allow and unit ~= "player" then
+    local baseName = name:gsub("%-.+", "")
+    local hasSpellList =
+        RaidCooldownsDB
+        and RaidCooldownsDB.senderSpells
+        and RaidCooldownsDB.senderSpells[baseName]
+        and RaidCooldownsDB.senderSpells[baseName] ~= ""
+
+    if not hasSpellList then
+        allow = false
+    end
+end
 
 ------------------------------------------------
 -- ADD ENTRY
@@ -2487,11 +2383,9 @@ local BAR_TEMPLATES = {
     BAR_ONLY   = "Bar Only",
     ICON_BAR  = "Icon + Bar",
     ICON_ONLY = "Icon Only",
-	COLUMN_LIST = "Column List",
 }
 local BAR_TEMPLATE_ORDER = {
     "ICON_BAR",
-	"COLUMN_LIST",
     "BAR_ONLY",
     "SPELL_OWNERS",
     "ICON_ONLY",
@@ -4594,125 +4488,6 @@ end)
 
 
 
-------------------------------------------------
--- SHOW COLUMN MENU
-------------------------------------------------
-
-local function ShowColumnMenu(group, anchor)
-    -- 🔒 SAFETY: ensure column always exists
-    if type(group.column) ~= "number" then
-        group.column = 1
-local storage = GetTemplateStorage()
-storage.columns[group.spellID] = 1
-
-    end
-
-    local menu = {
-        {
-            text = "Move to Column",
-            isTitle = true,
-            notCheckable = true,
-        },
-        {
-            text = "Column 1",
-            checked = (group.column == 1),
-            func = function()
-                group.column = 1
-local storage = GetTemplateStorage()
-storage.columns[group.spellID] = 1
-
-                UpdateLayout()
-            end,
-        },
-        {
-            text = "Column 2",
-            checked = (group.column == 2),
-            func = function()
-                group.column = 2
-                local storage = GetTemplateStorage()
-storage.columns[group.spellID] = 2
-
-                UpdateLayout()
-            end,
-        },
-        {
-            text = "Column 3",
-            checked = (group.column == 3),
-            func = function()
-                group.column = 3
-local storage = GetTemplateStorage()
-storage.columns[group.spellID] = 3
-
-                UpdateLayout()
-            end,
-        },
-    }
-
-    EasyMenu(
-        menu,
-        CreateFrame("Frame", nil, UIParent, "UIDropDownMenuTemplate"),
-        anchor,
-        0,
-        0,
-        "MENU"
-    )
-end
-
-
-
-
-
-
-------------------------------------------------
--- GET COLUMN FROM X 
-------------------------------------------------
-local function GetColumnFromX(relativeX)
-    local s = RaidCooldownsDB.settings
-    local colGap = 2
-    local leftPadding = 16
-    local rightPadding = 16
-    local barWidth = s.barWidth or 180
-
-    -- ✅ dynamic column count (same logic as COLUMN_LIST)
-    local wantedCols = tonumber(RaidCooldownsDB.settings.columns) or 3
-    local usableWidth = panel:GetWidth() - leftPadding - rightPadding
-    local fitCols = math.floor((usableWidth + colGap) / (barWidth + colGap))
-    if fitCols < 1 then fitCols = 1 end
-    local maxCols = math.min(wantedCols, fitCols)
-
-    local totalWidth  = (maxCols * barWidth) + ((maxCols - 1) * colGap)
-
-    -- center only if it fits; otherwise start at left padding
-    local startX = leftPadding
-    if totalWidth < usableWidth then
-        startX = leftPadding + (usableWidth - totalWidth) / 2
-    end
-
-    -- clamp outside the whole column region
-    if relativeX <= startX then
-        return 1
-    end
-    if relativeX >= (startX + totalWidth) then
-        return maxCols
-    end
-
-    -- pick the nearest column center (works even in the gaps)
-    local bestCol, bestDist = 1, math.huge
-    for col = 1, maxCols do
-        local colStart = startX + (col - 1) * (barWidth + colGap)
-        local centerX  = colStart + (barWidth * 0.5)
-        local d = math.abs(relativeX - centerX)
-        if d < bestDist then
-            bestDist = d
-            bestCol  = col
-        end
-    end
-
-    return bestCol
-end
-
-
-
 
 
 ------------------------------------------------
@@ -4939,112 +4714,77 @@ end
 -- UPDATE DRAG PREVIEW
 ------------------------------------------------
 function UpdateDragPreview()
-    if not RC.dragging then return end
-    if not RC.testMode then return end
+    if not RC.dragging then
+        if RC.gapFrame then RC.gapFrame:Hide() end
+        return
+    end
+    if not RC.testMode then
+        if RC.gapFrame then RC.gapFrame:Hide() end
+        return
+    end
 
     local s = RaidCooldownsDB.settings or {}
     local rowSize = (s.barHeight or 18) + (s.barSpacing or 6)
-
- -- ✅ Cursor in pixels -> UI units using UIParent scale (CORRECT SPACE)
-local cx, cy = GetCursorPosition()
-local uiScale = UIParent:GetEffectiveScale()
-if not uiScale or uiScale == 0 then return end
-cx, cy = cx / uiScale, cy / uiScale
-
--- ✅ Panel rect in the SAME UI space
-local pLeft = panel:GetLeft()
-local pTop  = panel:GetTop()
-if not pLeft or not pTop then return end
-
-local panelW = panel:GetWidth() or 0
-local panelH = panel:GetHeight() or 0
-if panelW <= 0 or panelH <= 0 then return end
-
--- Cursor position relative to panel
-local relX = cx - pLeft
-local relYFromTop = pTop - cy   -- 0 at top, increases downward
-
--- clamp inside panel
-if relX < 0 then relX = 0 end
-if relX > panelW then relX = panelW end
-if relYFromTop < 0 then relYFromTop = 0 end
-if relYFromTop > panelH then relYFromTop = panelH end
-
-  
-
     local template = RaidCooldownsDB.settings.template
 
-    ------------------------------------------------------------
-    -- COLUMN_LIST (layout uses paddingTop = -16)
-    ------------------------------------------------------------
-    if template == "COLUMN_LIST" then
-        local maxCols = tonumber(RaidCooldownsDB.settings.columns) or 3
-local targetCol = GetColumnFromX(relX) or 1
-if targetCol < 1 or targetCol > maxCols then targetCol = 1 end
+    local cx, cy = GetCursorPosition()
+    local uiScale = UIParent:GetEffectiveScale()
+    if not uiScale or uiScale == 0 then return end
+    cx, cy = cx / uiScale, cy / uiScale
 
--- count visible per column excluding dragged
-local counts = {}
-for c=1,maxCols do counts[c]=0 end
-for _, e in ipairs(GetVisibleOrdered() or {}) do
-    if e.bar and e.bar ~= RC.dragging then
-        local c = tonumber(e.column) or 1
-        if c < 1 or c > maxCols then c = 1 end
-        counts[c] = counts[c] + 1
+    local pLeft = panel:GetLeft()
+    local pTop = panel:GetTop()
+    if not pLeft or not pTop then return end
+
+    local relX = cx - pLeft
+    local relYFromTop = pTop - cy
+
+    local startX, colWidth, colGap = GetUniversalLayoutMetrics(template, s)
+
+    local targetGroup = math.floor((relX - startX) / (colWidth + colGap)) + 1
+    if targetGroup < 1 then targetGroup = 1 end
+    if targetGroup > 3 then targetGroup = 3 end
+
+    local groups = GetGroupedVisibleOrdered()
+    local count = 0
+    for _, e in ipairs(groups[targetGroup] or {}) do
+        if e.bar ~= RC.dragging then
+            count = count + 1
+        end
     end
-end
 
--- ✅ list area padding (matches layout's paddingTop=-16)
-local listTopPad    = 16
-local listBottomPad = 16
+    local topPad = STACK_TOP_OFFSET or 14
+    local listY = relYFromTop - topPad
+    if listY < 0 then listY = 0 end
 
--- map cursor Y into list region
-local listY = relYFromTop - listTopPad
-local listMax = (panelH - listTopPad - listBottomPad)
-if listMax < 1 then listMax = 1 end
+    local row = math.floor(listY / rowSize) + 1
+    local maxRow = count + 1
+    if row < 1 then row = 1 end
+    if row > maxRow then row = maxRow end
 
--- clamp into list region (prevents snap-to-extremes when cursor leaves panel slightly)
-if listY < 0 then listY = 0 end
-if listY > listMax then listY = listMax end
+    RC.dragTargetColumn = targetGroup
+    RC.dragTargetRow = row
+    RC.dragTargetIndex = nil
 
--- compute row (no "+0.5 rowSize" needed; it causes jumpiness near borders)
-local row = math.floor(listY / rowSize) + 1
+    if RC.gapFrame then
+        local x = startX + ((targetGroup - 1) * (colWidth + colGap))
+        local y = -(topPad) - ((row - 1) * rowSize)
 
-local maxRow = (counts[targetCol] or 0) + 1
-if row < 1 then row = 1 end
-if row > maxRow then row = maxRow end
+        local gapWidth
+        if template == "ICON_ONLY" then
+            gapWidth = s.barHeight or 18
+        else
+            gapWidth = s.barWidth or 180
+        end
 
-RC.dragTargetColumn = targetCol
-RC.dragTargetRow    = row
-RC.dragTargetIndex  = nil
-
-local key = "C:" .. targetCol .. ":" .. row
-if RC._lastDragKey ~= key then
-    RC._lastDragKey = key
-    UpdateLayout()
-end
-return
-
-end
-
-    ------------------------------------------------------------
-    -- NORMAL LIST (layout uses STACK_TOP_OFFSET)
-    ------------------------------------------------------------
-    local list = GetVisibleOrdered() or {}
-    if #list == 0 then return end
-
-    local topOffset = STACK_TOP_OFFSET or 14
-    local idx = math.floor(((relYFromTop - topOffset) + (rowSize * 0.5)) / rowSize) + 1
-
-    if idx < 1 then idx = 1 end
-    if idx > (#list + 1) then idx = (#list + 1) end
-
-    RC.dragTargetIndex  = idx
-    RC.dragTargetColumn = nil
-    RC.dragTargetRow    = nil
-
-    local key = "I:" .. idx
-    if RC._lastDragKey ~= key then
-        RC._lastDragKey = key
+        RC.gapFrame:ClearAllPoints()
+        RC.gapFrame:SetSize(gapWidth, s.barHeight or 18)
+        RC.gapFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
+        RC.gapFrame:Show()
+    end
+	    local dragKey = tostring(targetGroup) .. ":" .. tostring(row)
+    if RC._lastDragKey ~= dragKey then
+        RC._lastDragKey = dragKey
         UpdateLayout()
     end
 end
@@ -5157,70 +4897,57 @@ PreCreateAllBars = function()
     end
 end
 
+
+
+
+
+
 ------------------------------------------------
 -- GET VISIBLE ORDERED LIST
 ------------------------------------------------
 function GetVisibleOrdered()
-
-    if RC.testMode then
-        if RC.previewOrdered and #RC.previewOrdered > 0 then
-            return RC.previewOrdered
-        end
-        return RC.ordered or {}
+    if RC and RC.testMode and RC.previewOrdered then
+        return RC.previewOrdered
     end
-
-    return RC.ordered or {}
+    return (RC and RC.ordered) or {}
 end
 
+function GetGroupedVisibleOrdered()
+    local list = GetVisibleOrdered() or {}
+    local groups = { [1] = {}, [2] = {}, [3] = {} }
 
-
-------------------------------------------------
--- NormalizeColumnOrders (FIXED / STORAGE SAFE)
-------------------------------------------------
-function NormalizeColumnOrders()
-
-    -- Only for column mode
-    if RaidCooldownsDB.settings.template ~= "COLUMN_LIST" then
-        return
+    for _, entry in ipairs(list) do
+        local g = tonumber(entry.group) or 1
+        if g < 1 or g > 3 then g = 1 end
+        table.insert(groups[g], entry)
     end
 
-    if RC.dragging then return end
-
-    local storage = GetTemplateStorage()
-
-    local cols = {
-        [1] = {},
-        [2] = {},
-        [3] = {},
-    }
-
-    ------------------------------------------------
-    -- Build columns from ordered list
-    ------------------------------------------------
-    for _, g in ipairs(RC.ordered or {}) do
-        local col = g.column or 1
-        table.insert(cols[col], g)
-    end
-
-    ------------------------------------------------
-    -- Sort each column using STORAGE order
-    ------------------------------------------------
-    for col = 1, 3 do
-
-        table.sort(cols[col], function(a, b)
-            return (storage.order[a.spellID] or 9999)
-                 < (storage.order[b.spellID] or 9999)
-        end)
-
-        ------------------------------------------------
-        -- Reassign normalized order
-        ------------------------------------------------
-        for index, g in ipairs(cols[col]) do
-            storage.order[g.spellID] = index
-            storage.columns[g.spellID] = col
-        end
-    end
+    return groups
 end
+
+function GetUniversalLayoutMetrics(template, s)
+    local barW = s.barWidth or 180
+    local barH = s.barHeight or 18
+    local colWidth
+
+    if template == "ICON_ONLY" then
+        colWidth = math.max(80, barW * 0.5)
+    else
+        colWidth = barW
+    end
+
+    local colGap = 16
+    local totalWidth = (colWidth * 3) + (colGap * 2)
+    local panelW = (panel and panel:GetWidth()) or totalWidth
+    local startX = 16
+
+    if panelW > totalWidth then
+        startX = math.floor((panelW - totalWidth) / 2)
+    end
+
+    return startX, colWidth, colGap
+end
+
 
 
 ------------------------------------------------
@@ -5229,26 +4956,22 @@ end
 function HandleBarDrop(bar)
     if InCombatLockdown() then return end
     if not RC.dragging then return end
-	
-	-- stop cursor follow + restore bar back to panel
-bar:SetScript("OnUpdate", nil)
-bar:SetParent(panel)
-bar:SetFrameStrata("MEDIUM")
-bar:SetFrameLevel(panel:GetFrameLevel() + 5)
-bar:StopMovingOrSizing()
-bar:Show()
+
+    bar:SetScript("OnUpdate", nil)
+    bar:SetParent(panel)
+    bar:SetFrameStrata("MEDIUM")
+    bar:SetFrameLevel(panel:GetFrameLevel() + 5)
+    bar:StopMovingOrSizing()
+    bar:Show()
 
     RC.dragStarted = false
 
-    local storage  = GetTemplateStorage()
-    local template = RaidCooldownsDB.settings.template
+    local storage = GetTemplateStorage()
+    local targetGroup = tonumber(RC.dragTargetColumn) or 1
+    local targetRow = tonumber(RC.dragTargetRow) or 1
+    if targetGroup < 1 or targetGroup > 3 then targetGroup = 1 end
+    if targetRow < 1 then targetRow = 1 end
 
-    -- capture targets BEFORE clearing state
-    local targetIndex = RC.dragTargetIndex
-    local targetCol   = RC.dragTargetColumn
-    local targetRow   = RC.dragTargetRow
-
-    -- find dragged entry
     local draggedEntry
     for _, e in ipairs(RC.entries or {}) do
         if e.bar == bar then
@@ -5258,129 +4981,63 @@ bar:Show()
     end
     if not draggedEntry then
         RC.dragging = nil
+        if RC.gapFrame then
+            RC.gapFrame:Hide()
+        end
         return
     end
 
-    ------------------------------------------------
-    -- COLUMN_LIST DROP (fix row shift bug)
-    ------------------------------------------------
-    if template == "COLUMN_LIST" then
-        targetCol = tonumber(targetCol) or (draggedEntry.column or 1)
-        if targetCol < 1 or targetCol > MAX_COLUMNS then targetCol = 1 end
+    local groups = GetGroupedVisibleOrdered()
+    for g = 1, 3 do groups[g] = groups[g] or {} end
 
-        targetRow = tonumber(targetRow) or 1
-        if targetRow < 1 then targetRow = 1 end
-
-        -- build columns from current visible order
-        local cols = {}
-        for c = 1, MAX_COLUMNS do cols[c] = {} end
-
-        -- also record the dragged entry's current (col,row)
-        local fromCol, fromRow = nil, nil
-
-        for _, e in ipairs(GetVisibleOrdered() or {}) do
-            local c = tonumber(e.column) or 1
-            if c < 1 or c > MAX_COLUMNS then c = 1 end
-            table.insert(cols[c], e)
-        end
-
-        -- find current row of dragged within its column
-        for c = 1, MAX_COLUMNS do
-            for r, e in ipairs(cols[c]) do
-                if e == draggedEntry then
-                    fromCol, fromRow = c, r
-                    break
-                end
-            end
-            if fromCol then break end
-        end
-
-        -- remove dragged from its old column list
-        if fromCol and fromRow then
-            table.remove(cols[fromCol], fromRow)
-        end
-
-        -- ✅ if staying in same column and moving DOWN, target row shifts up by 1 after removal
-        if fromCol == targetCol and fromRow and targetRow > fromRow then
-            targetRow = targetRow - 1
-        end
-
-        -- clamp insert row (allow insert at end => #col + 1)
-        local maxInsert = #cols[targetCol] + 1
-        if targetRow > maxInsert then targetRow = maxInsert end
-
-        -- insert dragged
-        draggedEntry.column = targetCol
-        table.insert(cols[targetCol], targetRow, draggedEntry)
-
-        -- write storage
-        storage.order   = storage.order   or {}
-        storage.columns = storage.columns or {}
-
-        for c = 1, MAX_COLUMNS do
-            for r, e in ipairs(cols[c]) do
-                storage.columns[e.spellID] = c
-                storage.order[e.spellID]   = r
-            end
-        end
-
-    ------------------------------------------------
-    -- NON-COLUMN DROP (fix index shift bug)
-    ------------------------------------------------
-    else
-        local list = GetVisibleOrdered() or {}
-        if #list == 0 then
-            RC.dragging = nil
-            return
-        end
-
-        -- find current index
-        local fromIndex
-        for i, e in ipairs(list) do
+    local fromGroup, fromRow
+    for g = 1, 3 do
+        for r, e in ipairs(groups[g]) do
             if e == draggedEntry then
-                fromIndex = i
+                fromGroup, fromRow = g, r
                 break
             end
         end
-        if not fromIndex then
-            RC.dragging = nil
-            return
-        end
+        if fromGroup then break end
+    end
 
-        targetIndex = tonumber(targetIndex) or fromIndex
+    if fromGroup and fromRow then
+        table.remove(groups[fromGroup], fromRow)
+    end
 
-        -- remove first
-        table.remove(list, fromIndex)
+ 
 
-        -- ✅ if moving DOWN, target index shifts up by 1 after removal
-        if targetIndex > fromIndex then
-            targetIndex = targetIndex - 1
-        end
+    local maxInsert = #groups[targetGroup] + 1
+    if targetRow > maxInsert then targetRow = maxInsert end
 
-        -- clamp (allow drop at end)
-        local maxInsert = #list + 1
-        if targetIndex < 1 then targetIndex = 1 end
-        if targetIndex > maxInsert then targetIndex = maxInsert end
+    draggedEntry.group = targetGroup
+    table.insert(groups[targetGroup], targetRow, draggedEntry)
 
-        table.insert(list, targetIndex, draggedEntry)
+    storage.order = storage.order or {}
+    storage.group = storage.group or {}
 
-        wipe(storage.order)
-        for i, e in ipairs(list) do
-            storage.order[e.spellID] = i
+    for g = 1, 3 do
+        for r, e in ipairs(groups[g]) do
+            storage.group[e.spellID] = g
+            storage.order[e.spellID] = r
+            e.group = g
         end
     end
 
-  -- clear drag state AFTER commit
-RC.dragging = nil
-RC.draggingEntry = nil
-RC.previewOrdered = nil        
-RC._lastDragKey = nil
-RC.dragTargetIndex = nil
-RC.dragTargetColumn = nil
-RC.dragTargetRow = nil
+    RC.dragging = nil
+    RC.draggingEntry = nil
+    RC.previewOrdered = nil
+    RC._lastDragKey = nil
+    RC.dragTargetIndex = nil
+    RC.dragTargetColumn = nil
+    RC.dragTargetRow = nil
 
-RebuildOrderedList()
-UpdateLayout()
+    if RC.gapFrame then
+        RC.gapFrame:Hide()
+    end
+
+    RebuildOrderedList()
+    UpdateLayout()
 end
 
 local function NormalizeColor(t, dr, dg, db, da)
@@ -5417,19 +5074,22 @@ end
 -- UPDATE DEATH VISUAL
 ------------------------------------------------
 UpdateDeathVisual = function(entry)
+
     local bar = entry.bar
     if not bar then return end
 
-    if entry.isDead or entry.isOffline then
+    if entry.isDead then
+        -- Grey out
         bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
         bar.icon:SetVertexColor(0.4, 0.4, 0.4)
         if bar.label then
             RC_SetTextColor(bar.label, 0.6, 0.6, 0.6)
         end
         if bar.cdText then
-            RC_SetTextColor(bar.cdText, 0.6, 0.6, 0.6)
+            RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
         end
     else
+        -- Restore visuals
         ApplyClassColor(bar, entry.class)
         bar.icon:SetVertexColor(1, 1, 1)
         ApplyConfiguredTextColors(bar)
@@ -5550,155 +5210,113 @@ LayoutHandlers = LayoutHandlers or {}
 ------------------------------------------------
 LayoutHandlers.ICON_BAR = function()
     HideAllBars()
+    PreCreateAllBars()
 
     local s = RaidCooldownsDB.settings
     local rowSize = math.max(1, (s.barHeight or 18) + (s.barSpacing or 0))
-    local list = GetVisibleOrdered()
+    local groups = GetGroupedVisibleOrdered()
+    local targetGroup = RC.dragTargetColumn
+    local targetRow = RC.dragTargetRow
+    local startX, colWidth, colGap = GetUniversalLayoutMetrics("ICON_BAR", s)
 
-    local target = RC.dragTargetIndex
+    for group = 1, 3 do
+        local x = startX + ((group - 1) * (colWidth + colGap))
+        local slot = 0
 
-   
+        for _, entry in ipairs(groups[group] or {}) do
+            local bar = entry.bar
+            if bar and bar ~= RC.dragging then
+                slot = slot + 1
 
-    -- We'll place bars by slot index (1-based). This prevents overlap/reuse bugs.
-    local slot = 0
+                if targetGroup == group and targetRow and slot == targetRow then
+                    slot = slot + 1
+                end
 
-    for i, entry in ipairs(list) do
-        slot = slot + 1
+                bar.entry = entry
+                entry.bar = bar
 
-        -- Insert a blank slot at the drag target index (visual gap)
-        if target and slot == target then
-            slot = slot + 1
-        end
+                ResetBarVisuals(bar, entry)
+                bar:SetSize(s.barWidth, s.barHeight)
 
-        -- IMPORTANT: Acquire bar by slot, not by entry.bar
-     local bar = entry.bar
+                local y = -(STACK_TOP_OFFSET or 14) - ((slot - 1) * rowSize)
 
-        -- (Optional) keep a reference for clicks/tooltips etc.
-        bar.entry = entry
-        entry.bar = bar
-
-       
-
-        if bar == RC.dragging then
-            -- Don't anchor dragged bar; it stays with the mouse
-            bar:Show()
-        else
-            ResetBarVisuals(bar, entry)
-            bar:SetSize(s.barWidth, s.barHeight)
-
-            local barY = -STACK_TOP_OFFSET - ((slot - 1) * rowSize)
-
-           
-
-if (not RC.dragging) and (not IsWithinPanelUniversal(barY, s.barHeight, STACK_TOP_OFFSET, 16)) then
-                bar:Hide()
-            else
                 bar:ClearAllPoints()
-                AnchorBarToPanelTop(bar, barY)
-
-              
-
+                bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
                 bar:Show()
+
+                bar.icon:SetSize(s.barHeight, s.barHeight)
+                bar.icon:ClearAllPoints()
+                bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
+
+                bar.fill:ClearAllPoints()
+                bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", ICON_GAP, 0)
+                bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
+
+                local sx = s.spellTextOffsetX or 0
+                local sy = s.spellTextOffsetY or 0
+                bar.label:ClearAllPoints()
+                bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4 + sx, sy)
+                bar.label:SetJustifyH("LEFT")
+                bar.label:SetJustifyV("MIDDLE")
+                bar.label:SetText(GetBarLabelText(entry))
+
+                bar.cdText:SetJustifyH("RIGHT")
+                bar.cdText:SetJustifyV("MIDDLE")
+                bar.cdText:Show()
             end
-
-            -- Icon
-            bar.icon:SetSize(s.barHeight, s.barHeight)
-            bar.icon:ClearAllPoints()
-            bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
-
-            -- Fill
-            bar.fill:ClearAllPoints()
-            bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", ICON_GAP, 0)
-            bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
-
-            -- Label
-            local sx = s.spellTextOffsetX or 0
-            local sy = s.spellTextOffsetY or 0
-            bar.label:ClearAllPoints()
-            bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4 + sx, sy)
-            bar.label:SetJustifyH("LEFT")
-            bar.label:SetJustifyV("MIDDLE")
-
-            -- CD Text
-            bar.cdText:SetJustifyH("RIGHT")
-            bar.cdText:SetJustifyV("MIDDLE")
-            bar.cdText:Show()
-
-            bar.label:SetText(GetBarLabelText(entry))
         end
     end
 
-    -- Hide any remaining bars in the pool above 'slot' (safety)
-    if RC.barPool then
-        for j = slot + 1, #RC.barPool do
-            if RC.barPool[j] then
-                RC.barPool[j]:Hide()
-                RC.barPool[j].entry = nil
-            end
-        end
+    if RC.dragging then
+        RC.dragging:Show()
     end
 end
-
 ------------------------------------------------
 -- BAR ONLY
 ------------------------------------------------
 LayoutHandlers.BAR_ONLY = function()
- HideAllBars()
+    HideAllBars()
+    PreCreateAllBars()
 
     local s = RaidCooldownsDB.settings
- local rowSize = math.max(1, (s.barHeight or 18) + (s.barSpacing or 0))
- 
-   local list = GetVisibleOrdered()
-  
+    local rowSize = math.max(1, (s.barHeight or 18) + (s.barSpacing or 0))
+    local groups = GetGroupedVisibleOrdered()
+    local targetGroup = RC.dragTargetColumn
+    local targetRow = RC.dragTargetRow
+    local startX, colWidth, colGap = GetUniversalLayoutMetrics("BAR_ONLY", s)
 
-    local target = RC.dragTargetIndex
-    local slot = 0
+    for group = 1, 3 do
+        local x = startX + ((group - 1) * (colWidth + colGap))
+        local slot = 0
 
-for _, entry in ipairs(list) do
-    local bar = entry.bar
-
-    if bar then
-        if bar == RC.dragging then
-            bar:Show()
-        else
-            slot = slot + 1
-
-            if target and slot == target then
+        for _, entry in ipairs(groups[group] or {}) do
+            local bar = entry.bar
+            if bar and bar ~= RC.dragging then
                 slot = slot + 1
-            end
 
-            local barY = -STACK_TOP_OFFSET - ((slot - 1) * rowSize)
-			
-			RC_Debug(("PLACE: slot=%d %s (%d) barY=%s"):format(
-    slot, tostring(entry.name), tonumber(entry.spellID or -1), tostring(barY)
-))
+                if targetGroup == group and targetRow and slot == targetRow then
+                    slot = slot + 1
+                end
 
-            if (not RC.dragging) and (not IsWithinPanelUniversal(barY, s.barHeight)) then
-                bar:Hide()
-            else
+                local y = -(STACK_TOP_OFFSET or 14) - ((slot - 1) * rowSize)
+
                 ResetBarVisuals(bar, entry)
                 bar:SetSize(s.barWidth, s.barHeight)
-
                 bar:ClearAllPoints()
-                AnchorBarToPanelTop(bar, barY)
-				
-				local p1, rel, p2, x, y = bar:GetPoint(1)
-RC_Debug(("POINT: %s => %s %s x=%s y=%s"):format(tostring(entry.name), tostring(p1), tostring(p2), tostring(x), tostring(y)))
-
-
+                bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
                 bar:Show()
 
                 bar.icon:Hide()
                 bar.fill:SetAllPoints(bar)
 
                 bar.label:ClearAllPoints()
-bar.label:SetPoint(
-    "CENTER",
-    bar,
-    "CENTER",
-    s.spellTextOffsetX or 0,
-    s.spellTextOffsetY or 0
-)
+                bar.label:SetPoint(
+                    "CENTER",
+                    bar,
+                    "CENTER",
+                    s.spellTextOffsetX or 0,
+                    s.spellTextOffsetY or 0
+                )
 
                 ApplyClassColor(bar, entry.class)
                 bar.label:SetText(GetBarLabelText(entry))
@@ -5709,238 +5327,122 @@ bar.label:SetPoint(
             end
         end
     end
-end
 
+    if RC.dragging then
+        RC.dragging:Show()
+    end
 end
 
 ------------------------------------------------
 -- ICON ONLY (ANCHOR SAFE)
 ------------------------------------------------
 LayoutHandlers.ICON_ONLY = function()
-
     HideAllBars()
+    PreCreateAllBars()
 
     local s = RaidCooldownsDB.settings
-    local rowSize = s.barHeight + s.barSpacing
-    local list = GetVisibleOrdered()
-
-    local target = RC.dragTargetIndex
-    local slot = 0
-
-for _, entry in ipairs(list) do
-    local bar = entry.bar
-
-    if bar then
-        if bar == RC.dragging then
-            bar:Show()
-        else
-            slot = slot + 1
-
-            if target and slot == target then
-                slot = slot + 1
-            end
-
-            local y = -16 - ((slot - 1) * rowSize)
-
-            ResetBarVisuals(bar, entry)
-            bar:SetSize(s.barHeight, s.barHeight)
-
-            if IsWithinPanelUniversal(y, s.barHeight) then
-                bar:ClearAllPoints()
-                AnchorBarToPanelTop(bar, y)
-                bar:Show()
-            else
-                bar:Hide()
-            end
-
-            bar.icon:ClearAllPoints()
-            bar.icon:SetSize(s.barHeight, s.barHeight)
-            bar.icon:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
-
-            bar.fill:Hide()
-            bar.label:Hide()
-        end
-    end
-end
-
-end
-
-------------------------------------------------
--- COLUMN LIST (OWNER-BASED, CORRECT)
-------------------------------------------------
-LayoutHandlers.COLUMN_LIST = function()
-    HideAllBars()
-
-    local s = RaidCooldownsDB.settings
-
-    -- layout constants (same style as your existing code)
-    local paddingTop   = -16
-    local colGap       = 2
-    local leftPadding  = 16
-    local rightPadding = 16
-
-    local barWidth = s.barWidth
-    local rowSize  = math.max(1, (s.barHeight or 18) + (s.barSpacing or 0))
-
-    -- How many columns the user configured (we KEEP this as the saved column space)
-    local wantedCols = tonumber(RaidCooldownsDB.settings.columns) or 3
-    if wantedCols < 1 then wantedCols = 1 end
-
-    -- How many columns can physically fit (we only RENDER this many)
-    local panelW      = (panel and panel:GetWidth()) or 0
-    local usableWidth = panelW - leftPadding - rightPadding
-    local fitCols     = math.floor((usableWidth + colGap) / (barWidth + colGap))
-    if fitCols < 1 then fitCols = 1 end
-
-    local renderCols = math.min(wantedCols, fitCols)
-    if renderCols < 1 then renderCols = 1 end
-
-    -- center only the rendered columns
-    local totalWidth = (renderCols * barWidth) + ((renderCols - 1) * colGap)
-    local startX = leftPadding
-    if totalWidth < usableWidth then
-        startX = leftPadding + (usableWidth - totalWidth) / 2
-    end
-
-    -- IMPORTANT:
-    -- We keep entry.column as the SAVED column (1..wantedCols),
-    -- but for DISPLAY we clamp any hidden-column entries into the last visible column
-    local columns = {}
-    for i = 1, renderCols do columns[i] = {} end
-
-    local visible = GetVisibleOrdered() or {}
-    for _, entry in ipairs(visible) do
-        local savedCol = tonumber(entry.column) or 1
-        if savedCol < 1 or savedCol > wantedCols then savedCol = 1 end
-
-        local displayCol = savedCol
-        if displayCol > renderCols then displayCol = renderCols end
-
-        -- columns[displayCol] is guaranteed to exist (1..renderCols)
-        table.insert(columns[displayCol], entry)
-    end
-
-    local targetCol = RC.dragTargetColumn
+    local rowSize = (s.barHeight or 18) + (s.barSpacing or 0)
+    local groups = GetGroupedVisibleOrdered()
+    local targetGroup = RC.dragTargetColumn
     local targetRow = RC.dragTargetRow
-    if targetCol and (targetCol < 1 or targetCol > wantedCols) then targetCol = 1 end
-    if targetCol and targetCol > renderCols then targetCol = renderCols end
+    local startX, colWidth, colGap = GetUniversalLayoutMetrics("ICON_ONLY", s)
 
-    if RC.gapFrame then RC.gapFrame:Hide() end
-
-    -- render only columns that fit (everything is already mapped into 1..renderCols)
-    for col = 1, renderCols do
-        local x = startX + (col - 1) * (barWidth + colGap)
-
+    for group = 1, 3 do
+        local x = startX + ((group - 1) * (colWidth + colGap))
         local slot = 0
-        for _, entry in ipairs(columns[col]) do
-            slot = slot + 1
 
-            if RC.dragging and RC.draggingEntry and entry == RC.draggingEntry then
-                -- cursor-follow owns it
-            else
-                local bar = entry.bar
-                if bar then
-                    local shift = 0
-                    if RC.dragging and targetCol == col and targetRow then
-                        if slot >= targetRow then shift = 1 end
-                    end
+        for _, entry in ipairs(groups[group] or {}) do
+            local bar = entry.bar
+            if bar and bar ~= RC.dragging then
+                slot = slot + 1
 
-                    ResetBarVisuals(bar, entry)
-                    bar:SetSize(barWidth, s.barHeight)
-
-                    -- ICON + BAR geometry (same as your existing handler)
-                    bar.icon:Show(); bar.fill:Show(); bar.label:Show()
-                    if bar.cdText then bar.cdText:Show() end
-
-                    bar.icon:SetSize(s.barHeight, s.barHeight)
-                    bar.icon:ClearAllPoints()
-                    bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
-
-                    bar.fill:ClearAllPoints()
-                    bar.fill:SetPoint("TOPLEFT", bar.icon, "TOPRIGHT", ICON_GAP, 0)
-                    bar.fill:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
-
-                    local sx = s.spellTextOffsetX or 0
-                    local sy = s.spellTextOffsetY or 0
-                    bar.label:ClearAllPoints()
-                    bar.label:SetPoint("LEFT", bar.fill, "LEFT", 4 + sx, sy)
-                    bar.label:SetJustifyH("LEFT")
-                    bar.label:SetJustifyV("MIDDLE")
-
-                    if bar.cdText then
-                        local cx = s.cdTextOffsetX or 0
-                        local cy = s.cdTextOffsetY or 0
-                        bar.cdText:SetJustifyH("RIGHT")
-                        bar.cdText:SetJustifyV("MIDDLE")
-                        bar.cdText:ClearAllPoints()
-                        bar.cdText:SetPoint("RIGHT", bar, "RIGHT", -4 + cx, cy)
-                    end
-
-                    bar.label:SetText(GetBarLabelText(entry))
-
-                    local y = paddingTop - ((slot - 1 + shift) * rowSize)
-
-                    -- pass explicit padding so it doesn't get hidden at the top
-                    if (not RC.dragging) and (not IsWithinPanelUniversal(y, s.barHeight, 16, 16)) then
-                        bar:Hide()
-                    else
-                        bar:ClearAllPoints()
-                        bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
-                        bar:Show()
-                    end
+                if targetGroup == group and targetRow and slot == targetRow then
+                    slot = slot + 1
                 end
+
+                local y = -16 - ((slot - 1) * rowSize)
+
+                ResetBarVisuals(bar, entry)
+                bar:SetSize(s.barHeight, s.barHeight)
+                bar:ClearAllPoints()
+                bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
+                bar:Show()
+
+                bar.icon:ClearAllPoints()
+                bar.icon:SetSize(s.barHeight, s.barHeight)
+                bar.icon:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+
+                bar.fill:Hide()
+                bar.label:Hide()
             end
         end
     end
+
+    if RC.dragging then
+        RC.dragging:Show()
+    end
 end
+
 ------------------------------------------------
 -- SPELL OWNERS
 ------------------------------------------------
 LayoutHandlers.SPELL_OWNERS = function()
     HideAllBars()
+    PreCreateAllBars()
 
     local s = RaidCooldownsDB.settings
-    local rowSize = s.barHeight + s.barSpacing
-    local list = GetVisibleOrdered()
+    local rowSize = (s.barHeight or 18) + (s.barSpacing or 0)
+    local groups = GetGroupedVisibleOrdered()
+    local targetGroup = RC.dragTargetColumn
+    local targetRow = RC.dragTargetRow
+    local startX, colWidth, colGap = GetUniversalLayoutMetrics("SPELL_OWNERS", s)
 
-    local target = RC.dragTargetIndex
-    local slot = 0
+    for group = 1, 3 do
+        local x = startX + ((group - 1) * (colWidth + colGap))
+        local slot = 0
 
-    for _, entry in ipairs(list) do
-        local bar = entry.bar
-        if bar then
-            if bar == RC.dragging then
-                bar:Show()
-            else
+        for _, entry in ipairs(groups[group] or {}) do
+            local bar = entry.bar
+            if bar and bar ~= RC.dragging then
                 slot = slot + 1
-                if target and slot == target then
+
+                if targetGroup == group and targetRow and slot == targetRow then
                     slot = slot + 1
                 end
 
-                local barY = -STACK_TOP_OFFSET - ((slot - 1) * rowSize)
+                local y = -(STACK_TOP_OFFSET or 14) - ((slot - 1) * rowSize)
 
-                if (not RC.dragging) and (not IsWithinPanelUniversal(barY, s.barHeight)) then
-                    bar:Hide()
-                else
-                    ResetBarVisuals(bar, entry)
-                    bar:SetSize(s.barWidth, s.barHeight)
+                ResetBarVisuals(bar, entry)
+                bar:SetSize(s.barWidth, s.barHeight)
+                bar:ClearAllPoints()
+                bar:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
+                bar:Show()
 
-                    bar:ClearAllPoints()
-                    AnchorBarToPanelTop(bar, barY)
-                    bar:Show()
+                bar.icon:SetSize(s.barHeight, s.barHeight)
+                bar.icon:ClearAllPoints()
+                bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
 
-                    bar.icon:SetSize(s.barHeight, s.barHeight)
-                    bar.icon:ClearAllPoints()
-                    bar.icon:SetPoint("LEFT", bar, "LEFT", 0, 0)
+                bar.fill:Hide()
 
-                    bar.fill:Hide()
+                bar.label:ClearAllPoints()
+                bar.label:SetPoint(
+                    "LEFT",
+                    bar.icon,
+                    "RIGHT",
+                    6 + (s.spellTextOffsetX or 0),
+                    s.spellTextOffsetY or 0
+                )
+                bar.label:SetText(GetBarLabelText(entry))
 
-                    bar.label:ClearAllPoints()
-bar.label:SetPoint("LEFT", bar.icon, "RIGHT", 6 + (s.spellTextOffsetX or 0), s.spellTextOffsetY or 0)
-bar.label:SetText(GetBarLabelText(entry))
-                end
+                bar.cdText:SetJustifyH("RIGHT")
+                bar.cdText:SetJustifyV("MIDDLE")
+                bar.cdText:Show()
             end
         end
+    end
+
+    if RC.dragging then
+        RC.dragging:Show()
     end
 end
 
@@ -7267,29 +6769,14 @@ local function RC_PickChannel()
   return nil
 end
 
-
-function RC_BroadcastHello()
-    local chan = RC_PickChannel()
-    if not chan then return end
-
-    local myHash = RC_SenderHashFromDB and RC_SenderHashFromDB() or "EMPTY"
-    local payload = "HELLO;" .. tostring(RC.version or "0.2.4") .. ";" .. (myHash or "EMPTY")
-
-    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-        C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, chan)
-    elseif SendAddonMessage then
-        SendAddonMessage(SENDER_PREFIX, payload, chan)
-    end
-end
-
 local function RC_SendSenderPing()
   local chan = RC_PickChannel()
   if not chan then return end
   local myHash = RC_SenderHashFromDB()
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-  C_ChatInfo.SendAddonMessage(SENDER_PREFIX, "PING;" .. tostring(RC.version or "0.2.4") .. ";" .. myHash, chan)
+    C_ChatInfo.SendAddonMessage(SENDER_PREFIX, "PING;1.0.0;"..myHash, chan)
   elseif SendAddonMessage then
-   SendAddonMessage(SENDER_PREFIX, "PING;" .. tostring(RC.version or "0.2.4") .. ";" .. myHash, chan)
+    SendAddonMessage(SENDER_PREFIX, "PING;1.0.0;"..myHash, chan)
   end
 
 end
@@ -7457,7 +6944,7 @@ local function RC_RequestSenderUpdate(base)
   end
 
   local myHash = RC_SenderHashFromDB and RC_SenderHashFromDB() or "EMPTY"
- local payload = "PONG;" .. tostring(RC.version or "0.2.3") .. ";" .. (myHash or "")
+  local payload = "PING;1.0.0;" .. (myHash or "EMPTY")
 
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
     C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, "WHISPER", full)
@@ -8320,15 +7807,23 @@ do
 
                 cb:SetChecked(IsSpellTracked(spell.id))
                 cb:SetScript("OnClick", function(self)
-                    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
-                    if self:GetChecked() then
-                        RaidCooldownsDB.trackedSpells[spell.id] = nil
-                    else
-                        RaidCooldownsDB.trackedSpells[spell.id] = false
-                    end
-                    RebuildOrderedList()
-                    UpdateLayout()
-                end)
+    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
+
+    if self:GetChecked() then
+        RaidCooldownsDB.trackedSpells[spell.id] = nil
+    else
+        RaidCooldownsDB.trackedSpells[spell.id] = false
+    end
+
+    RC.previewOrdered = nil
+    RC.dragging = nil
+    RC.dragTargetIndex = nil
+    RC.dragTargetColumn = nil
+    RC.dragTargetRow = nil
+
+    RebuildOrderedList()
+    UpdateLayout()
+end)
 
                 prev = cb
             end

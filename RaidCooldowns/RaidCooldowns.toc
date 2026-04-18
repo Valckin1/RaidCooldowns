@@ -4,7 +4,7 @@
 ## OptionalDeps: LibStub, LibDataBroker-1.1
 ## Notes: Advanced raid cooldowns, alerts, utilities & voice cues
 ## Author: Valszone
-## Version: 0.2.5
+## Version: 0.2.6
 ## SavedVariables: RaidCooldownsDB
 
 RaidCooldowns.lua
