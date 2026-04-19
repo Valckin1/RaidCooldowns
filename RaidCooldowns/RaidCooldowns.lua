@@ -297,7 +297,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.8"
+RC.version = "0.2.9"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -785,7 +785,8 @@ end
 ------------------------------------------------
 
 
-
+ev:RegisterEvent("ENCOUNTER_START")
+ev:RegisterEvent("ENCOUNTER_END")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_LOGOUT")
 ev:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -896,6 +897,8 @@ UpdateProfileStatusText()
 
     return
 end
+
+
 
 if event == "PLAYER_LOGOUT" then
     RaidCooldownsDB = RaidCooldownsDB or {}
@@ -1019,6 +1022,58 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
         if RC_CleanupPersistedCooldowns then RC_CleanupPersistedCooldowns() end
 
     end)
+
+    return
+end
+
+if event == "ENCOUNTER_START" then
+    RaidCooldownsDB.activeCooldowns = {}
+
+    for _, entry in ipairs(RC.entries or {}) do
+        entry.onCooldown = false
+        entry.cooldownStart = nil
+        entry.cooldownDuration = nil
+        entry.cooldownEnd = nil
+        entry.hide = false
+
+        if RC_SaveCooldownState then
+            RC_SaveCooldownState(entry)
+        end
+    end
+
+    if InCombatLockdown() then
+        pendingLayoutUpdate = true
+    else
+        RebuildOrderedList()
+        UpdateLayout()
+    end
+
+    return
+end
+
+if event == "ENCOUNTER_END" then
+    local encounterID, encounterName, difficultyID, groupSize, success = ...
+
+    for _, entry in ipairs(RC.entries or {}) do
+        entry.onCooldown = false
+        entry.cooldownStart = nil
+        entry.cooldownDuration = nil
+        entry.cooldownEnd = nil
+        entry.hide = false
+
+        if RC_SaveCooldownState then
+            RC_SaveCooldownState(entry)
+        end
+    end
+
+    RaidCooldownsDB.activeCooldowns = {}
+
+    if InCombatLockdown() then
+        pendingLayoutUpdate = true
+    else
+        RebuildOrderedList()
+        UpdateLayout()
+    end
 
     return
 end
