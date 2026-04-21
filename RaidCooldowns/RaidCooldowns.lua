@@ -158,6 +158,7 @@ function RC_SenderHashFromDB()
             end
         end
 
+
        if allow then
     local known = false
 
@@ -189,6 +190,10 @@ end
     local s = table.concat(ids, ",")
     return s == "" and "EMPTY" or s
 end
+
+
+
+
 
 -- HEALING / RAID COOLDOWNS (SOURCE OF TRUTH)
 ------------------------------------------------
@@ -297,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.2.9"
+RC.version = "0.3.1"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -732,7 +737,7 @@ function UpdateBarMouseState()
     -- Allow dragging ONLY when:
     -- - Test mode is on
     -- - Panel is unlocked
-    local allow = (not RC.locked) and RC.testMode
+   local allow = not RC.locked
 
     for _, entry in ipairs(RC.entries or {}) do
         if entry.bar then
@@ -784,7 +789,7 @@ end
 -- CLEAN LOGIN BOOTSTRAP (NO ADDON_LOADED)
 ------------------------------------------------
 
-
+ev:RegisterEvent("UNIT_CONNECTION")
 ev:RegisterEvent("ENCOUNTER_START")
 ev:RegisterEvent("ENCOUNTER_END")
 ev:RegisterEvent("PLAYER_LOGIN")
@@ -797,6 +802,30 @@ ev:RegisterEvent("TRAIT_CONFIG_UPDATED")
 ev:RegisterEvent("SPELLS_CHANGED")
 ev:RegisterEvent("UNIT_HEALTH")
 ev:RegisterEvent("CHAT_MSG_ADDON")
+
+
+function RC_BroadcastSenderHello()
+    local csv = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
+    local payload = "HELLO;" .. tostring(RC.version) .. ";" .. tostring(csv)
+
+    local channel
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        channel = "INSTANCE_CHAT"
+    elseif IsInRaid() then
+        channel = "RAID"
+    elseif IsInGroup() then
+        channel = "PARTY"
+    end
+
+    if channel then
+        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+            C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, channel)
+        elseif SendAddonMessage then
+            SendAddonMessage(SENDER_PREFIX, payload, channel)
+        end
+    end
+end
+
 
 ev:SetScript("OnEvent", function(self, event, ...)
 
@@ -822,6 +851,45 @@ RaidCooldownsDB.settings.cdTextColor    = RaidCooldownsDB.settings.cdTextColor  
 
 
 
+end
+
+if event == "UNIT_CONNECTION" then
+    local unit = ...
+
+    if not unit then return end
+    if not UnitExists(unit) then return end
+
+    if type(unit) ~= "string" then return end
+    if not (unit:match("^raid%d+$") or unit:match("^party%d+$") or unit == "player") then return end
+
+    local name, realm = UnitName(unit)
+    name  = name and string.format("%s", name) or ""
+    realm = realm and string.format("%s", realm) or ""
+    if name == "" then return end
+
+    if realm ~= "" then
+        name = name .. "-" .. realm
+    end
+
+    local baseName = string.format("%s", (name:gsub("%-.+", "")))
+    local fullName = string.format("%s", name)
+
+    local isOffline = not UnitIsConnected(unit)
+
+    for _, entry in ipairs(RC.entries or {}) do
+        local owner = entry.owner and string.format("%s", entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+
+        if owner == fullName or owner == baseName or ownerBase == baseName then
+            entry.isOffline = isOffline
+
+            if entry.bar then
+                if UpdateDeathVisual then UpdateDeathVisual(entry) end
+            end
+        end
+    end
+
+    return
 end
 
  if event == "PLAYER_LOGIN" then
@@ -867,7 +935,7 @@ UpdateOwners()
             local myBase = RC_NormalizeName((UnitName and UnitName("player")) or "")
             if myBase ~= "" then
                 RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
-                RaidCooldownsDB.senderSpells[myBase] = (RC_GetLocalOwnedSenderCSV and RC_GetLocalOwnedSenderCSV()) or "EMPTY"
+               RaidCooldownsDB.senderSpells[myBase] = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
             end
         end
         RegisterSpellcastUnits()
@@ -894,7 +962,7 @@ UpdateProfileStatusText()
         end
 
     end)
-
+RC_BroadcastSenderHello()
     return
 end
 
@@ -1078,24 +1146,18 @@ if event == "ENCOUNTER_END" then
     return
 end
 
-    if event == "GROUP_ROSTER_UPDATE" then
-        RegisterSpellcastUnits()
-	  if RC and RC.dragging then return end
-        SafeRefreshLayout()
-        return
-    end
+  if event == "GROUP_ROSTER_UPDATE" then
+    RegisterSpellcastUnits()
+    RC_BroadcastSenderHello()
+    if RC and RC.dragging then return end
+    SafeRefreshLayout()
+    return
+end
 
     if event == "PLAYER_REGEN_DISABLED" then
-        RC.dragging = nil
-        RC.previewOrdered = nil
-        RC.dragStarted = false
-        RC.dragCurrentOrder = nil
-		RC._lastDragKey = nil
-RC.dragTargetIndex = nil
-RC.dragTargetColumn = nil
-RC.dragTargetRow = nil
-        return
-    end
+    CancelBarDrag()
+    return
+end
 
     if event == "PLAYER_REGEN_ENABLED" then
         SafeRefreshLayout()
@@ -1104,6 +1166,8 @@ RC.dragTargetRow = nil
 
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
+	
+	
 
     -- Sender handshake/status
    if prefix == SENDER_PREFIX then
@@ -1119,14 +1183,20 @@ if event == "CHAT_MSG_ADDON" then
         RC.senderSeen[base] = RC.senderSeen[base] or {}
         RC.senderSeen[base].lastSeen = RC_Now()
 
-    if cmd == "HELLO" or cmd == "PONG" then
+  if cmd == "HELLO" or cmd == "PONG" then
     RC.senderSeen[base].version = ver or RC.senderSeen[base].version
     RC.senderSeen[base].hash = hash or RC.senderSeen[base].hash
 
     RaidCooldownsDB = RaidCooldownsDB or {}
     RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
-    RaidCooldownsDB.senderSpells[base] = hash or ""
-    RaidCooldownsDB.senderSpells[sender] = hash or ""
+
+    local incomingCSV = hash or ""
+	
+	
+    if incomingCSV ~= "" and incomingCSV ~= "EMPTY" then
+        RaidCooldownsDB.senderSpells[base] = incomingCSV
+        RaidCooldownsDB.senderSpells[sender] = incomingCSV
+    end
 
     if InCombatLockdown() then
         pendingLayoutUpdate = true
@@ -1144,7 +1214,8 @@ end
 
     -- ✅ Respond to scans (important)
 if cmd == "PING" then
-    local myCSV = (RC_GetLocalOwnedSenderCSV and RC_GetLocalOwnedSenderCSV()) or "EMPTY"
+    local myCSV = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
+	
     local payload = "PONG;" .. tostring(RC.version) .. ";" .. (myCSV or "EMPTY")
 
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
@@ -1164,29 +1235,38 @@ end
     -- Bridge support: allows anyone with this addon to track raid CDs without requiring everyone to install.
     -- RAIDCD_CLOG sends: prefix='RAIDCD_CLEU', msg='<Name-Realm>|<spellID>'
 if prefix == "RAIDCD_CLOG" then
-        if type(msg) ~= "string" then return end
-        local sourceName, spell = msg:match("^(.-)|(%d+)$")
-        local spellID = tonumber(spell)
-        if not sourceName or not spellID then return end
-        sourceName = tostring(sourceName)
-        local sourceBase = sourceName:gsub("%-.+", "")
+    if type(msg) ~= "string" then return end
 
-        for _, entry in ipairs(RC.entries or {}) do
-            if entry.spellID == spellID and not entry.onCooldown then
-                local owner = entry.owner and tostring(entry.owner) or ""
-                local ownerBase = owner:gsub("%-.+", "")
-                if owner == sourceName or ownerBase == sourceBase then
-                    UpdateGroupCooldown(entry)
-                    return
-                end
+    local sourceName, spell = msg:match("^(.-)|(%d+)$")
+    local spellID = tonumber(spell)
+    if not sourceName or not spellID then return end
+
+    sourceName = tostring(sourceName)
+    local sourceBase = sourceName:gsub("%-.+", "")
+    local senderName = sender and tostring(sender) or ""
+    local senderBase = senderName:gsub("%-.+", "")
+
+    for _, entry in ipairs(RC.entries or {}) do
+        if entry.spellID == spellID and not entry.onCooldown then
+            local owner = entry.owner and tostring(entry.owner) or ""
+            local ownerBase = owner:gsub("%-.+", "")
+
+            if owner == sourceName
+            or owner == senderName
+            or ownerBase == sourceBase
+            or ownerBase == senderBase then
+                UpdateGroupCooldown(entry)
+                return
             end
         end
-        return
     end
+
+    return
+end
 
      if prefix ~= "RAIDCOOLDOWNS" then return end
     if RC and RC.debugComms then
-        print("[RaidCooldowns] recv", sender, msg, channel)
+    
     end
     if type(msg) ~= "string" or msg == "" then return end
 
@@ -1314,17 +1394,19 @@ if event == "UNIT_HEALTH" then
     local fullName = string.format("%s", name)
 
     local isDead = UnitIsDeadOrGhost(unit)
+	local isOffline = not UnitIsConnected(unit)
 
     for _, entry in ipairs(RC.entries or {}) do
         local owner = entry.owner and string.format("%s", entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
         local ownerBase = owner:gsub("%-.+", "")
         if owner == fullName or owner == baseName or ownerBase == baseName then
-            entry.isDead = isDead
+entry.isDead = isDead
+entry.isOffline = isOffline
 
-            if entry.bar then
-                if UpdateDeathVisual then UpdateDeathVisual(entry) end
-            end
+if entry.bar then
+    if UpdateDeathVisual then UpdateDeathVisual(entry) end
+end
         end
     end
 
@@ -1489,27 +1571,39 @@ function RC_SenderHashFromDB()
     for spellID, data in pairs(HEALING_COOLDOWNS or {}) do
         local allow = false
 
-        if data and data.class == playerClass then
-            if ALWAYS_VISIBLE and ALWAYS_VISIBLE[spellID] then
-                allow = true
-            elseif HEALER_ONLY and HEALER_ONLY[spellID] then
-                if SPEC_FILTER and SPEC_FILTER[spellID] then
-                    allow = specID and SPEC_FILTER[spellID][specID] or false
-                else
-                    allow = true
-                end
-            elseif NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] then
-                allow = specID and NON_HEALER_SPELL_SPECS[spellID][specID] or false
-            end
-        end
+      if data.class == playerClass then
+    allow = true
+end
 
-        if allow and enabled[spellID] == false then
-            allow = false
-        end
+        -- if allow and enabled[spellID] == false then
+--     allow = false
+-- end
 
-        if allow and IsPlayerSpell and not IsPlayerSpell(spellID) then
-            allow = false
+     if allow then
+    local known = false
+
+    if IsPlayerSpell and IsPlayerSpell(spellID) then
+        known = true
+    end
+
+    if not known and IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(spellID) then
+        known = true
+    end
+
+    if not known and GetSpellInfo and GetSpellInfo(spellID) then
+        known = true
+    end
+
+    if not known and spellID == 272678 then
+        if select(2, UnitClass("player")) == "HUNTER" and UnitExists("pet") then
+            known = true
         end
+    end
+
+    if not known then
+        allow = false
+    end
+end
 
         if allow then
             ids[#ids + 1] = tonumber(spellID)
@@ -1518,6 +1612,7 @@ function RC_SenderHashFromDB()
 
     table.sort(ids)
     local s = table.concat(ids, ",")
+	
     return s == "" and "EMPTY" or s
 end
 
@@ -2012,7 +2107,9 @@ local restoredEntry = {
     cooldownStart = nil,
     cooldownDuration = nil,
     cooldownEnd = nil,
-    bar = pooledBar,          -- ✅ reuse if it exists
+    isDead = UnitIsDeadOrGhost(unit),
+    isOffline = not UnitIsConnected(unit),
+    bar = pooledBar,
 }
 if RC_RestoreCooldownState then
     RC_RestoreCooldownState(restoredEntry)
@@ -4871,17 +4968,37 @@ end
 
 
 
+local function CancelBarDrag()
+    if not RC or not RC.dragging then return end
 
+    local bar = RC.dragging
+
+    RC.dragStarted = false
+    RC.dragging = nil
+    RC.draggingEntry = nil
+    RC.dragTargetColumn = nil
+    RC.dragTargetRow = nil
+
+    if RC.gapFrame then
+        RC.gapFrame:Hide()
+    end
+
+    bar:SetScript("OnUpdate", nil)
+    bar:StopMovingOrSizing()
+
+    bar:SetParent(panel)
+    bar:SetFrameStrata("MEDIUM")
+    bar:SetFrameLevel(panel:GetFrameLevel() + 5)
+    bar:ClearAllPoints()
+
+    UpdateLayout()
+end
 
 ------------------------------------------------
 -- UPDATE DRAG PREVIEW
 ------------------------------------------------
 function UpdateDragPreview()
     if not RC.dragging then
-        if RC.gapFrame then RC.gapFrame:Hide() end
-        return
-    end
-    if not RC.testMode then
         if RC.gapFrame then RC.gapFrame:Hide() end
         return
     end
@@ -4978,8 +5095,7 @@ PreCreateAllBars = function()
             bar:RegisterForDrag("LeftButton")
 
             bar:SetScript("OnDragStart", function(self)
-                if RC.locked then return end
-                if not RC.testMode then return end
+if RC.locked then return end
 
                 RC.dragging = self
                 RC.draggingEntry = self._rcEntry
@@ -4997,18 +5113,23 @@ PreCreateAllBars = function()
                 DragFollowCursor_OnUpdate(self)
             end)
 
-            bar:SetScript("OnDragStop", function(self)
-                if not RC.dragStarted then return end
-                RC.dragStarted = false
+bar:SetScript("OnDragStop", function(self)
+    if InCombatLockdown() then
+        CancelBarDrag()
+        return
+    end
 
-                self:SetScript("OnUpdate", nil)
+    if not RC.dragStarted then return end
+    RC.dragStarted = false
 
-                self:SetParent(panel)
-                self:SetFrameStrata("MEDIUM")
-                self:SetFrameLevel(panel:GetFrameLevel() + 5)
+    self:SetScript("OnUpdate", nil)
 
-                HandleBarDrop(self)
-            end)
+    self:SetParent(panel)
+    self:SetFrameStrata("MEDIUM")
+    self:SetFrameLevel(panel:GetFrameLevel() + 5)
+
+    HandleBarDrop(self)
+end)
 
             -- ICON
             bar.icon = bar:CreateTexture(nil, "OVERLAY")
@@ -5237,23 +5358,36 @@ end
 -- UPDATE DEATH VISUAL
 ------------------------------------------------
 UpdateDeathVisual = function(entry)
-
     local bar = entry.bar
     if not bar then return end
 
-    if entry.isDead then
-        -- Grey out
-        bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
-        bar.icon:SetVertexColor(0.4, 0.4, 0.4)
+    if entry.isOffline then
+        bar.fill:SetStatusBarColor(0.35, 0.35, 0.35)
+        bar.icon:SetDesaturated(true)
+        bar.icon:SetVertexColor(0.6, 0.6, 0.6)
+
         if bar.label then
             RC_SetTextColor(bar.label, 0.6, 0.6, 0.6)
         end
         if bar.cdText then
-            RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
+            RC_SetTextColor(bar.cdText, 0.6, 0.6, 0.6)
         end
+
+    elseif entry.isDead then
+        bar.fill:SetStatusBarColor(0.4, 0.4, 0.4)
+        bar.icon:SetDesaturated(false)
+        bar.icon:SetVertexColor(0.4, 0.4, 0.4)
+
+        if bar.label then
+            RC_SetTextColor(bar.label, 0.6, 0.6, 0.6)
+        end
+        if bar.cdText then
+            RC_SetTextColor(bar.cdText, 0.6, 0.6, 0.6)
+        end
+
     else
-        -- Restore visuals
         ApplyClassColor(bar, entry.class)
+        bar.icon:SetDesaturated(false)
         bar.icon:SetVertexColor(1, 1, 1)
         ApplyConfiguredTextColors(bar)
     end
@@ -6917,7 +7051,7 @@ local function SetSenderSpellEnabled(spellID, enabled)
 
   local myBase = RC_NormalizeName((UnitName and UnitName("player")) or "")
   if myBase ~= "" then
-    RaidCooldownsDB.senderSpells[myBase] = (RC_GetLocalOwnedSenderCSV and RC_GetLocalOwnedSenderCSV()) or ((RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY")
+   RaidCooldownsDB.senderSpells[myBase] = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
   end
 end
 
@@ -6974,23 +7108,8 @@ end
 -- Popup to view a sender's spell CSV
 local RC_SenderPopup
 
-local function RC_GetLocalOwnedSenderCSV()
-  local ids, seen = {}, {}
-  local playerFull = (GetUnitName and GetUnitName("player", true)) or (UnitName and UnitName("player")) or ""
-  local playerBase = RC_NormalizeName(playerFull)
-
-  for _, entry in ipairs((RC and RC.entries) or {}) do
-    local ownerBase = RC_NormalizeName(entry and entry.owner or "")
-    local spellID = tonumber(entry and entry.spellID)
-    if spellID and ownerBase ~= "" and ownerBase == playerBase and not seen[spellID] then
-      seen[spellID] = true
-      ids[#ids + 1] = spellID
-    end
-  end
-
-  table.sort(ids)
-  local s = table.concat(ids, ",")
-  return s == "" and "EMPTY" or s
+function RC_GetLocalOwnedSenderCSV()
+    return (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
 end
 
 local function RC_GetSenderCSV(base)
@@ -6999,7 +7118,7 @@ local function RC_GetSenderCSV(base)
   local playerBase = RC_NormalizeName((UnitName and UnitName("player")) or "")
 
   if base ~= "" and playerBase ~= "" and base == playerBase then
-    local csv = RC_GetLocalOwnedSenderCSV()
+local csv = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
     if csv == "EMPTY" and RC_SenderHashFromDB then
       csv = RC_SenderHashFromDB() or "EMPTY"
     end
