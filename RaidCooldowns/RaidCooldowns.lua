@@ -960,13 +960,19 @@ UpdateProfileStatusText()
                 SwitchToProfile(assignedProfile)
             end
         end
-
-    end)
 RC_BroadcastSenderHello()
+    end)
+
     return
 end
 
-
+if event == "GROUP_ROSTER_UPDATE" then
+    RegisterSpellcastUnits()
+    RC_BroadcastSenderHello()
+    if RC and RC.dragging then return end
+    SafeRefreshLayout()
+    return
+end
 
 if event == "PLAYER_LOGOUT" then
     RaidCooldownsDB = RaidCooldownsDB or {}
@@ -1146,13 +1152,7 @@ if event == "ENCOUNTER_END" then
     return
 end
 
-  if event == "GROUP_ROSTER_UPDATE" then
-    RegisterSpellcastUnits()
-    RC_BroadcastSenderHello()
-    if RC and RC.dragging then return end
-    SafeRefreshLayout()
-    return
-end
+ 
 
  if event == "PLAYER_REGEN_DISABLED" then
     if RC.gapFrame then
@@ -1320,6 +1320,7 @@ for _, entry in ipairs(RC.entries or {}) do
         or owner == senderName
         or ownerBase == sourceBase
         or ownerBase == senderBase then
+
             UpdateGroupCooldown(entry)
             matched = true
         end
@@ -1327,9 +1328,9 @@ for _, entry in ipairs(RC.entries or {}) do
 end
 
 if matched then
-    if InCombatLockdown() then
-        pendingLayoutUpdate = true
-    else
+    UpdateLayout()
+
+    if not InCombatLockdown() then
         RebuildOrderedList()
         UpdateLayout()
     end
@@ -1343,6 +1344,9 @@ if event == "UNIT_SPELLCAST_SUCCEEDED" then
 
     -- Normalize spellID (avoids taint/secret-number comparisons)
     spellID = tonumber(tostring(spellID))
+	if spellID == 264667 then
+    spellID = 272678
+end
     if not spellID then return end
 
     if not unit or not spellID then return end
@@ -1358,13 +1362,14 @@ if not fullName or fullName == "" then
     end
 end
 local baseName = tostring(fullName:gsub("%-.+", ""))
-
+local didLocalMatch = false
     -- Match correct entry
     for _, entry in ipairs(RC.entries or {}) do
         local owner = entry.owner and string.format("%s", entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
         if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
             UpdateGroupCooldown(entry)
+			didLocalMatch = true
             -- Broadcast my cooldown to other addon users
 if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
                 if C_ChatInfo and C_ChatInfo.SendAddonMessage then
@@ -1378,6 +1383,7 @@ if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
                     end
                    if chan then
     local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+	
     C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
     if RC and RC.debugComms then
         print("[RaidCooldowns] send", playerName, spellID, chan)
@@ -1388,7 +1394,25 @@ end
             break
         end
     end
+if not didLocalMatch and unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
+    local chan
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        chan = "INSTANCE_CHAT"
+    elseif IsInRaid() then
+        chan = "RAID"
+    elseif IsInGroup() then
+        chan = "PARTY"
+    end
 
+    if chan then
+        local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+            C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+        elseif SendAddonMessage then
+            SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+        end
+    end
+end
     return
 end
 
@@ -1432,7 +1456,25 @@ if entry.bar then
 end
         end
     end
+if not didLocalMatch and unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
+    local chan
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        chan = "INSTANCE_CHAT"
+    elseif IsInRaid() then
+        chan = "RAID"
+    elseif IsInGroup() then
+        chan = "PARTY"
+    end
 
+    if chan then
+        local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+            C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+        elseif SendAddonMessage then
+            SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+        end
+    end
+end
     return
 end
 
