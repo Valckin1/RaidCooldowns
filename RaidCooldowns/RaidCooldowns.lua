@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.2"
+RC.version = "0.3.3"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1154,8 +1154,31 @@ end
     return
 end
 
-    if event == "PLAYER_REGEN_DISABLED" then
-    CancelBarDrag()
+ if event == "PLAYER_REGEN_DISABLED" then
+    if RC.gapFrame then
+        RC.gapFrame:Hide()
+    end
+
+    if RC.dragging then
+        local bar = RC.dragging
+        bar:SetScript("OnUpdate", nil)
+        bar:StopMovingOrSizing()
+        bar:SetParent(panel)
+        bar:SetFrameStrata("MEDIUM")
+        bar:SetFrameLevel(panel:GetFrameLevel() + 5)
+        bar:ClearAllPoints()
+    end
+
+    RC.dragging = nil
+    RC.previewOrdered = nil
+    RC.dragStarted = false
+    RC.dragCurrentOrder = nil
+    RC._lastDragKey = nil
+    RC.dragTargetIndex = nil
+    RC.dragTargetColumn = nil
+    RC.dragTargetRow = nil
+
+    UpdateLayout()
     return
 end
 
@@ -4968,7 +4991,7 @@ end
 
 
 
-local function CancelBarDrag()
+function CancelBarDrag()
     if not RC or not RC.dragging then return end
 
     local bar = RC.dragging
