@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.3"
+RC.version = "0.3.4"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1456,25 +1456,7 @@ if entry.bar then
 end
         end
     end
-if not didLocalMatch and unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
-    local chan
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        chan = "INSTANCE_CHAT"
-    elseif IsInRaid() then
-        chan = "RAID"
-    elseif IsInGroup() then
-        chan = "PARTY"
-    end
 
-    if chan then
-        local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-            C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-        elseif SendAddonMessage then
-            SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-        end
-    end
-end
     return
 end
 
