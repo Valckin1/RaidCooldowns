@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.4"
+RC.version = "0.3.5"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1294,16 +1294,20 @@ end
     if type(msg) ~= "string" or msg == "" then return end
 
     local sourceName, spell = msg:match("^(.-)|(%d+)$")
-    local spellID
+local spellID
 
-    if sourceName and spell then
-        spellID = tonumber(spell)
-    else
-        sourceName = sender and string.format("%s", sender) or ""
-        spellID = tonumber(msg)
-    end
+if sourceName and spell then
+    spellID = tonumber(spell)
+else
+    sourceName = sender and string.format("%s", sender) or ""
+    spellID = tonumber(msg)
+end
 
-    if not spellID or not sourceName or sourceName == "" then return end
+if spellID == 264667 then
+    spellID = 272678
+end
+
+if not spellID or not sourceName or sourceName == "" then return end
 
   local sourceBase = sourceName:gsub("%-.+", "")
 local senderName = sender and string.format("%s", sender) or ""
