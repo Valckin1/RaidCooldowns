@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.5"
+RC.version = "0.3.6"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1101,27 +1101,6 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 end
 
 if event == "ENCOUNTER_START" then
-    RaidCooldownsDB.activeCooldowns = {}
-
-    for _, entry in ipairs(RC.entries or {}) do
-        entry.onCooldown = false
-        entry.cooldownStart = nil
-        entry.cooldownDuration = nil
-        entry.cooldownEnd = nil
-        entry.hide = false
-
-        if RC_SaveCooldownState then
-            RC_SaveCooldownState(entry)
-        end
-    end
-
-    if InCombatLockdown() then
-        pendingLayoutUpdate = true
-    else
-        RebuildOrderedList()
-        UpdateLayout()
-    end
-
     return
 end
 
@@ -1307,13 +1286,18 @@ if spellID == 264667 then
     spellID = 272678
 end
 
+
 if not spellID or not sourceName or sourceName == "" then return end
+
+local myName = (GetUnitName and GetUnitName("player", true)) or (UnitName and UnitName("player")) or ""
+
 
   local sourceBase = sourceName:gsub("%-.+", "")
 local senderName = sender and string.format("%s", sender) or ""
 local senderBase = senderName:gsub("%-.+", "")
 
 local matched = false
+
 
 for _, entry in ipairs(RC.entries or {}) do
     if entry.spellID == spellID then
@@ -1324,6 +1308,8 @@ for _, entry in ipairs(RC.entries or {}) do
         or owner == senderName
         or ownerBase == sourceBase
         or ownerBase == senderBase then
+
+
 
             UpdateGroupCooldown(entry)
             matched = true
@@ -1355,6 +1341,31 @@ end
 
     if not unit or not spellID then return end
     if not UnitExists(unit) then return end
+	
+	
+	
+	if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
+    local tracked = HEALING_COOLDOWNS and HEALING_COOLDOWNS[spellID]
+    if tracked then
+        local chan
+        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+            chan = "INSTANCE_CHAT"
+        elseif IsInRaid() then
+            chan = "RAID"
+        elseif IsInGroup() then
+            chan = "PARTY"
+        end
+
+        if chan then
+            local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+            if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+                C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+            elseif SendAddonMessage then
+                SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
+            end
+        end
+    end
+end
 
    local fullName = (GetUnitName and GetUnitName(unit, true)) or nil
 if not fullName or fullName == "" then
@@ -1374,49 +1385,11 @@ local didLocalMatch = false
         if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
             UpdateGroupCooldown(entry)
 			didLocalMatch = true
-            -- Broadcast my cooldown to other addon users
-if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
-                if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-                    local chan
-                    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-                        chan = "INSTANCE_CHAT"
-                    elseif IsInRaid() then
-                        chan = "RAID"
-                    elseif IsInGroup() then
-                        chan = "PARTY"
-                    end
-                   if chan then
-    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-	
-    C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-    if RC and RC.debugComms then
-        print("[RaidCooldowns] send", playerName, spellID, chan)
-    end
-end
-                end
-            end
+           
             break
         end
     end
-if not didLocalMatch and unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
-    local chan
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        chan = "INSTANCE_CHAT"
-    elseif IsInRaid() then
-        chan = "RAID"
-    elseif IsInGroup() then
-        chan = "PARTY"
-    end
 
-    if chan then
-        local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-            C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-        elseif SendAddonMessage then
-            SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-        end
-    end
-end
     return
 end
 
