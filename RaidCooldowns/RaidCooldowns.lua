@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.6"
+RC.version = "0.3.7"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -2052,18 +2052,13 @@ elseif not allow and NON_HEALER_SPELL_SPECS and NON_HEALER_SPELL_SPECS[spellID] 
             and RaidCooldownsDB.senderSpells
             and RaidCooldownsDB.senderSpells[baseName]
 
-        if unit == "raid1" then
-            print("|cff33ff99RC NonHealerCSV|r", "spellID=", tostring(spellID), "csv=", tostring(csv))
-        end
+       
 
-        if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
-            if ("," .. csv .. ","):find("," .. tostring(spellID) .. ",", 1, true) then
-                allow = true
-                if unit == "raid1" then
-                    print("|cff33ff99RC NonHealerMATCH|r", "spellID=", tostring(spellID))
-                end
-            end
-        end
+       if type(csv) == "string" and csv ~= "" and csv ~= "EMPTY" then
+    if ("," .. csv .. ","):find("," .. tostring(spellID) .. ",", 1, true) then
+        allow = true
+    end
+end
     end
 end
 
