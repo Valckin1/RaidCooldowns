@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.7"
+RC.version = "0.3.8"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -808,14 +808,14 @@ function RC_BroadcastSenderHello()
     local csv = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
     local payload = "HELLO;" .. tostring(RC.version) .. ";" .. tostring(csv)
 
-    local channel
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        channel = "INSTANCE_CHAT"
-    elseif IsInRaid() then
-        channel = "RAID"
-    elseif IsInGroup() then
-        channel = "PARTY"
-    end
+   local channel
+if IsInRaid() then
+    channel = "RAID"
+elseif IsInGroup() then
+    channel = "PARTY"
+elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+    channel = "INSTANCE_CHAT"
+end
 
     if channel then
         if C_ChatInfo and C_ChatInfo.SendAddonMessage then
@@ -909,6 +909,7 @@ if RC_CreateLDBLauncher then RC_CreateLDBLauncher() end
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix("RAIDCOOLDOWNS")
             C_ChatInfo.RegisterAddonMessagePrefix(SENDER_PREFIX)
+			C_ChatInfo.RegisterAddonMessagePrefix("RAIDCD_CLEU")
             RaidCooldownsDB.senderSpells = RaidCooldownsDB.senderSpells or {}
             RaidCooldownsDB.senderLocalSpells = RaidCooldownsDB.senderLocalSpells or {}
             local myBase = RC_NormalizeName(UnitName and UnitName("player") or "")
@@ -1107,6 +1108,13 @@ end
 if event == "ENCOUNTER_END" then
     local encounterID, encounterName, difficultyID, groupSize, success = ...
 
+    -- Only reset cooldowns after raid encounters.
+    -- Do NOT reset after Mythic+ / dungeon bosses.
+    local inInstance, instanceType = IsInInstance()
+    if instanceType ~= "raid" then
+        return
+    end
+
     for _, entry in ipairs(RC.entries or {}) do
         entry.onCooldown = false
         entry.cooldownStart = nil
@@ -1130,7 +1138,6 @@ if event == "ENCOUNTER_END" then
 
     return
 end
-
  
 
  if event == "PLAYER_REGEN_DISABLED" then
@@ -1168,6 +1175,8 @@ end
 
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
+
+   
 	
 	
 
@@ -1236,8 +1245,10 @@ end
 
     -- Bridge support: allows anyone with this addon to track raid CDs without requiring everyone to install.
     -- RAIDCD_CLOG sends: prefix='RAIDCD_CLEU', msg='<Name-Realm>|<spellID>'
-if prefix == "RAIDCD_CLOG" then
+if prefix == "RAIDCD_CLOG" or prefix == "RAIDCD_CLEU" then
     if type(msg) ~= "string" then return end
+	
+	print("|cff33ff99RC CLEU|r", "prefix=", tostring(prefix), "msg=", tostring(msg), "sender=", tostring(sender), "channel=", tostring(channel))
 
     local sourceName, spell = msg:match("^(.-)|(%d+)$")
     local spellID = tonumber(spell)
@@ -1288,6 +1299,8 @@ end
 
 
 if not spellID or not sourceName or sourceName == "" then return end
+
+
 
 local myName = (GetUnitName and GetUnitName("player", true)) or (UnitName and UnitName("player")) or ""
 
@@ -1347,23 +1360,32 @@ end
 	if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
     local tracked = HEALING_COOLDOWNS and HEALING_COOLDOWNS[spellID]
     if tracked then
-        local chan
-        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-            chan = "INSTANCE_CHAT"
-        elseif IsInRaid() then
-            chan = "RAID"
-        elseif IsInGroup() then
-            chan = "PARTY"
-        end
+     local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+local payload = tostring(playerName) .. "|" .. tostring(spellID)
 
-        if chan then
-            local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-            if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-                C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-            elseif SendAddonMessage then
-                SendAddonMessage("RAIDCOOLDOWNS", tostring(playerName) .. "|" .. tostring(spellID), chan)
-            end
-        end
+local sent = {}
+
+local function SendRC(channel)
+    if not channel or sent[channel] then return end
+    sent[channel] = true
+
+    print("|cff00ccffRC SEND CD|r", "spell=", tostring(spellID), "chan=", tostring(channel), "player=", tostring(playerName))
+
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel)
+    elseif SendAddonMessage then
+        SendAddonMessage("RAIDCOOLDOWNS", payload, channel)
+    end
+end
+
+if IsInRaid() then
+    SendRC("RAID")
+elseif IsInGroup() then
+    SendRC("PARTY")
+    SendRC("INSTANCE_CHAT")
+elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+    SendRC("INSTANCE_CHAT")
+end
     end
 end
 
@@ -7075,12 +7097,12 @@ local function SetSenderSpellEnabled(spellID, enabled)
 end
 
 local function RC_PickChannel()
-  if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-    return "INSTANCE_CHAT"
-  elseif IsInRaid() then
+  if IsInRaid() then
     return "RAID"
   elseif IsInGroup() then
     return "PARTY"
+  elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+    return "INSTANCE_CHAT"
   end
   return nil
 end
