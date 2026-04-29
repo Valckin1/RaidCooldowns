@@ -302,7 +302,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.8"
+RC.version = "0.3.9"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1176,9 +1176,12 @@ end
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
 
-   
-	
-	
+if prefix == "RAIDCOOLDOWNS" and UnitAffectingCombat("player") then
+    local who, spell = tostring(msg or ""):match("^(.-)|(%d+)$")
+    if who and spell then
+        print("|cffffcc00RC CD MSG|r", "spell=", tostring(spell), "from=", tostring(who), "channel=", tostring(channel), "sender=", tostring(sender))
+    end
+end
 
     -- Sender handshake/status
    if prefix == SENDER_PREFIX then
@@ -1277,11 +1280,9 @@ if prefix == "RAIDCD_CLOG" or prefix == "RAIDCD_CLEU" then
     return
 end
 
-     if prefix ~= "RAIDCOOLDOWNS" then return end
-    if RC and RC.debugComms then
-    
-    end
-    if type(msg) ~= "string" or msg == "" then return end
+if prefix ~= "RAIDCOOLDOWNS" then return end
+if type(msg) ~= "string" or msg == "" then return end
+
 
     local sourceName, spell = msg:match("^(.-)|(%d+)$")
 local spellID
@@ -1357,6 +1358,7 @@ end
 	
 	
 	
+	
 	if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
     local tracked = HEALING_COOLDOWNS and HEALING_COOLDOWNS[spellID]
     if tracked then
@@ -1369,7 +1371,7 @@ local function SendRC(channel)
     if not channel or sent[channel] then return end
     sent[channel] = true
 
-    print("|cff00ccffRC SEND CD|r", "spell=", tostring(spellID), "chan=", tostring(channel), "player=", tostring(playerName))
+  
 
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
         C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel)
