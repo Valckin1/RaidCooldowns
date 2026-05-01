@@ -1202,14 +1202,7 @@ end
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
 
-    local playerName = UnitName("player") or ""
-    local senderText = tostring(sender or "")
-
-    if senderText ~= "" and not senderText:find(playerName, 1, true) then
-        if prefix == "RAIDCOOLDOWNS" or prefix == "RAIDCD_CLEU" or prefix == "RAIDCD_CLOG" then
-            print("|cffffcc00RC OTHER MSG|r", "prefix=", tostring(prefix), "msg=", tostring(msg), "channel=", tostring(channel), "sender=", senderText)
-        end
-    end
+  
 
 
 
@@ -1281,7 +1274,7 @@ end
 if prefix == "RAIDCD_CLOG" or prefix == "RAIDCD_CLEU" then
     if type(msg) ~= "string" then return end
 	
-	print("|cff33ff99RC CLEU|r", "prefix=", tostring(prefix), "msg=", tostring(msg), "sender=", tostring(sender), "channel=", tostring(channel))
+	
 
     local sourceName, spell = msg:match("^(.-)|(%d+)$")
     local spellID = tonumber(spell)
@@ -1423,7 +1416,7 @@ local function SendRC(channel, target)
     if sent[key] then return end
     sent[key] = true
 
-    print("|cff00ccffRC SEND CD|r", "spell=", tostring(spellID), "chan=", tostring(channel), "target=", tostring(target or ""), "player=", tostring(playerName))
+   
 
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
         C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
