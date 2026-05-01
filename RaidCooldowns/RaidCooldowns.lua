@@ -303,7 +303,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.0"
+RC.version = "0.4.1"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1793,6 +1793,7 @@ font = "Fonts\\FRIZQT__.TTF",
     centerBars = true,
     hideUnused = false,
 	hideOutOfGroup = false,
+	removeClassBackdrop = false,
     template   = "BAR_ONLY",
 
     spellTextOffsetX = 0,
@@ -2927,7 +2928,7 @@ function AddSliderValueText(slider)
     RC_SetTextColor(valueText, 1, 0.82, 0)
 
     -- 🔽 DIRECTLY UNDER THE SLIDER BAR
-    valueText:SetPoint("TOP", slider, "BOTTOM", 0, -8)
+   valueText:SetPoint("TOP", slider, "BOTTOM", 0, -2)
 
     slider.ValueText = valueText
 
@@ -3594,7 +3595,7 @@ end
 
 -- Card
 appearanceCard = CreateRightSection(COLUMN_WIDTH)
-appearanceCard:SetHeight(200)
+appearanceCard:SetHeight(225)
 
 
 
@@ -3730,6 +3731,25 @@ nameRow:SetPoint("TOP", templateDrop, "BOTTOM", 0, -10)
 cdRow:ClearAllPoints()
 cdRow:SetPoint("TOP", nameRow, "BOTTOM", 0, -6)
 
+local removeClassBackdrop = CreateFrame("CheckButton", nil, appearanceCard, "InterfaceOptionsCheckButtonTemplate")
+NormalizeCheckButton(removeClassBackdrop)
+removeClassBackdrop.Text:SetText("No class backdrop")
+removeClassBackdrop.Text:SetWidth(180)
+removeClassBackdrop.Text:SetWordWrap(false)
+removeClassBackdrop:SetChecked(RaidCooldownsDB.settings.removeClassBackdrop)
+removeClassBackdrop:SetScript("OnClick", function(self)
+    SaveProfileSetting("removeClassBackdrop", self:GetChecked())
+
+    for _, bar in pairs(RC.bars or {}) do
+        ApplyClassBackdropVisibility(bar)
+    end
+
+    UpdateLayout()
+end)
+
+removeClassBackdrop:ClearAllPoints()
+removeClassBackdrop:SetPoint("TOPLEFT", cdRow, "BOTTOMLEFT", 0, -2)
+
 ------------------------------------------------
 -- FONT DROPDOWN (STABLE + SIMPLE)
 ------------------------------------------------
@@ -3737,11 +3757,13 @@ local fontLabel, fontDrop =
     CreateCardDropdown(appearanceCard, "Font", -20)
 
 fontLabel:ClearAllPoints()
-fontLabel:SetPoint("TOP", cdRow, "BOTTOM", 0, -10)
+fontLabel:SetPoint("TOP", appearanceCard, "TOP", 0, -162)
+fontLabel:SetJustifyH("CENTER")
 
 fontDrop:ClearAllPoints()
-fontDrop:SetPoint("TOP", fontLabel, "BOTTOM", 0, -10)
-
+fontDrop:SetPoint("TOP", fontLabel, "BOTTOM", 0, -6)
+fontDrop:SetWidth(170)
+UIDropDownMenu_SetWidth(fontDrop, 170)
 
 
 
@@ -3800,7 +3822,8 @@ C_Timer.After(0, function()
 end)
 
 
-UIDropDownMenu_SetWidth(fontDrop, appearanceCard:GetWidth() - 48)
+fontDrop:SetWidth(170)
+UIDropDownMenu_SetWidth(fontDrop, 170)
 
 
 
@@ -3975,7 +3998,7 @@ controlsCard:Add(testBtn, 4)
 panelSizeCard = CreateRightSection(COLUMN_WIDTH)
 panelSizeCard:SetWidth(COLUMN_WIDTH)
 panelSizeCard._fixed = true
-panelSizeCard:SetHeight(145)
+panelSizeCard:SetHeight(130)
 
 
 ------------------------------------------------
@@ -3989,6 +4012,11 @@ panelWidth.Text:SetText("Panel Width")
 panelWidth.Low:SetText("240")
 panelWidth.High:SetText("900")
 AddSliderValueText(panelWidth)
+
+if panelWidth.ValueText then
+    panelWidth.ValueText:ClearAllPoints()
+    panelWidth.ValueText:SetPoint("TOP", panelWidth, "BOTTOM", 0, -1)
+end
 
 panelWidth:SetScript("OnValueChanged", function(self, value)
     value = math.floor(tonumber(value) or 360)
@@ -4020,15 +4048,20 @@ panelHeight.Low:SetText("150")
 panelHeight.High:SetText("700")
 AddSliderValueText(panelHeight)
 
+if panelHeight.ValueText then
+    panelHeight.ValueText:ClearAllPoints()
+    panelHeight.ValueText:SetPoint("TOP", panelHeight, "BOTTOM", 0, -1)
+end
+
 -- Extra spacing for Panel Size sliders only
 if panelWidth.Text then
     panelWidth.Text:ClearAllPoints()
-    panelWidth.Text:SetPoint("BOTTOM", panelWidth, "TOP", 0, 10) -- was 6
+   panelWidth.Text:SetPoint("BOTTOM", panelWidth, "TOP", 0, 4)
 end
 
 if panelHeight.Text then
     panelHeight.Text:ClearAllPoints()
-    panelHeight.Text:SetPoint("BOTTOM", panelHeight, "TOP", 0, 10)
+   panelHeight.Text:SetPoint("BOTTOM", panelHeight, "TOP", 0, 4)
 end
 
 
@@ -4042,18 +4075,13 @@ end)
 
 
 
-local panelSizeSliders = {
-    panelWidth,
-    panelHeight,
-}
+panelWidth:ClearAllPoints()
+panelWidth:SetPoint("TOPLEFT", panelSizeCard, "TOPLEFT", 16, -38)
+panelWidth:SetPoint("RIGHT", panelSizeCard, "RIGHT", -16, 0)
 
-
-
-DistributeSlidersEvenly(panelSizeCard, panelSizeSliders)
-for _, s in ipairs(panelSizeSliders) do
-    s:SetPoint("LEFT", panelSizeCard, "LEFT", 16, 0)
-    s:SetPoint("RIGHT", panelSizeCard, "RIGHT", -16, 0)
-end
+panelHeight:ClearAllPoints()
+panelHeight:SetPoint("TOPLEFT", panelWidth, "BOTTOMLEFT", 0, -34)
+panelHeight:SetPoint("RIGHT", panelSizeCard, "RIGHT", -16, 0)
 
 
 
@@ -5220,7 +5248,17 @@ local function ApplyClassColor(bar, class)
     end
 end
 
+local function ApplyClassBackdropVisibility(bar)
+    if not bar or not bar.fill then return end
 
+    local s = RaidCooldownsDB and RaidCooldownsDB.settings or {}
+
+    if s.removeClassBackdrop then
+        bar.fill:Hide()
+    else
+        bar.fill:Show()
+    end
+end
 
 function CancelBarDrag()
     if not RC or not RC.dragging then return end
@@ -5641,6 +5679,7 @@ UpdateDeathVisual = function(entry)
 
     else
         ApplyClassColor(bar, entry.class)
+		ApplyClassBackdropVisibility(bar)
         bar.icon:SetDesaturated(false)
         bar.icon:SetVertexColor(1, 1, 1)
         ApplyConfiguredTextColors(bar)
@@ -5724,9 +5763,10 @@ local function ResetBarVisuals(bar, entry)
     ------------------------------------------------
     -- Color
     ------------------------------------------------
-    ApplyClassColor(bar, entry.class)
-	
-	UpdateDeathVisual(entry)
+ApplyClassColor(bar, entry.class)
+ApplyClassBackdropVisibility(bar)
+
+UpdateDeathVisual(entry)
 
 end
 
@@ -5869,8 +5909,10 @@ LayoutHandlers.BAR_ONLY = function()
                     s.spellTextOffsetY or 0
                 )
 
-                ApplyClassColor(bar, entry.class)
-                bar.label:SetText(GetBarLabelText(entry))
+ApplyClassColor(bar, entry.class)
+ApplyClassBackdropVisibility(bar)
+
+bar.label:SetText(GetBarLabelText(entry))
 
                 bar.cdText:SetJustifyH("RIGHT")
                 bar.cdText:SetJustifyV("MIDDLE")
