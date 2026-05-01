@@ -212,6 +212,7 @@ local HEALING_COOLDOWNS = {
     [207399] = { name = "Ancestral Protection Totem", class = "SHAMAN", cooldown = 300, category = "utility" },
     [192077] = { name = "Wind Rush Totem", class = "SHAMAN", cooldown = 120, category = "utility" },
     [2825]   = { name = "Bloodlust", class = "SHAMAN", cooldown = 300, category = "utility" },
+	[20608]  = { name = "Reincarnation", class = "SHAMAN", cooldown = 1800, category = "utility" },
 
     -- PRIEST
     [64843]  = { name = "Divine Hymn", class = "PRIEST", cooldown = 180, category = "raid" },
@@ -302,7 +303,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.3.9"
+RC.version = "0.4.0"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -335,6 +336,24 @@ end
 -- CREATE PANEL
 ------------------------------------------------
 panel = CreateFrame("Frame", "RaidCooldownsPanel", UIParent, "BackdropTemplate")
+
+local function RC_IsInGroupOrRaid()
+    return IsInGroup() or IsInRaid()
+end
+
+function RC_UpdateGroupVisibility()
+    if not panel or not RaidCooldownsDB or not RaidCooldownsDB.settings then return end
+
+    if RaidCooldownsDB.settings.hideOutOfGroup and not RC_IsInGroupOrRaid() then
+        panel:Hide()
+        if RC.gapFrame then
+            RC.gapFrame:Hide()
+        end
+        return
+    end
+
+    panel:Show()
+end
 
 -- one reusable gap placeholder for drag previews (MUST be after panel exists)
 RC.gapFrame = RC.gapFrame or CreateFrame("Frame", nil, panel, "BackdropTemplate")
@@ -800,9 +819,10 @@ ev:RegisterEvent("PLAYER_REGEN_DISABLED")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("TRAIT_CONFIG_UPDATED")
 ev:RegisterEvent("SPELLS_CHANGED")
+ev:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 ev:RegisterEvent("UNIT_HEALTH")
 ev:RegisterEvent("CHAT_MSG_ADDON")
-
+ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 function RC_BroadcastSenderHello()
     local csv = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
@@ -851,6 +871,12 @@ RaidCooldownsDB.settings.cdTextColor    = RaidCooldownsDB.settings.cdTextColor  
 
 
 
+end
+
+if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+    if RC_UpdateGroupVisibility then
+        RC_UpdateGroupVisibility()
+    end
 end
 
 if event == "UNIT_CONNECTION" then
@@ -949,7 +975,7 @@ UpdateProfileStatusText()
        
         UpdatePanelBackground()
 
-        -- Register combat log tracking (safe to defer if in combat)
+       
 
         -- 🔥 FORCE SPEC SYNC
         local specIndex = GetSpecialization()
@@ -1176,12 +1202,16 @@ end
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
 
-if prefix == "RAIDCOOLDOWNS" and UnitAffectingCombat("player") then
-    local who, spell = tostring(msg or ""):match("^(.-)|(%d+)$")
-    if who and spell then
-        print("|cffffcc00RC CD MSG|r", "spell=", tostring(spell), "from=", tostring(who), "channel=", tostring(channel), "sender=", tostring(sender))
+    local playerName = UnitName("player") or ""
+    local senderText = tostring(sender or "")
+
+    if senderText ~= "" and not senderText:find(playerName, 1, true) then
+        if prefix == "RAIDCOOLDOWNS" or prefix == "RAIDCD_CLEU" or prefix == "RAIDCD_CLOG" then
+            print("|cffffcc00RC OTHER MSG|r", "prefix=", tostring(prefix), "msg=", tostring(msg), "channel=", tostring(channel), "sender=", senderText)
+        end
     end
-end
+
+
 
     -- Sender handshake/status
    if prefix == SENDER_PREFIX then
@@ -1343,20 +1373,39 @@ end
     return
 end
 
+if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELLS_CHANGED" or event == "PLAYER_LOGIN" then
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.2, function()
+            if RC_SyncPlayerSpellCooldown then
+                RC_SyncPlayerSpellCooldown(20608) -- Shaman Reincarnation
+            end
+        end)
+    else
+        if RC_SyncPlayerSpellCooldown then
+            RC_SyncPlayerSpellCooldown(20608)
+        end
+    end
+end
+
 if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, castGUID, spellID = ...
 
     -- Normalize spellID (avoids taint/secret-number comparisons)
-    spellID = tonumber(tostring(spellID))
-	if spellID == 264667 then
+spellID = tonumber(tostring(spellID))
+if spellID == 264667 then
     spellID = 272678
+end
+
+-- Shaman Reincarnation: normalize actual self-res cast to tracked passive cooldown
+if spellID == 21169 then
+    spellID = 20608
 end
     if not spellID then return end
 
     if not unit or not spellID then return end
     if not UnitExists(unit) then return end
 	
-	
+
 	
 	
 	if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
@@ -1367,16 +1416,46 @@ local payload = tostring(playerName) .. "|" .. tostring(spellID)
 
 local sent = {}
 
-local function SendRC(channel)
-    if not channel or sent[channel] then return end
-    sent[channel] = true
+local function SendRC(channel, target)
+    if not channel then return end
 
-  
+    local key = tostring(channel) .. ":" .. tostring(target or "")
+    if sent[key] then return end
+    sent[key] = true
+
+    print("|cff00ccffRC SEND CD|r", "spell=", tostring(spellID), "chan=", tostring(channel), "target=", tostring(target or ""), "player=", tostring(playerName))
 
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel)
+        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
     elseif SendAddonMessage then
-        SendAddonMessage("RAIDCOOLDOWNS", payload, channel)
+        SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
+    end
+end
+
+local function SendRCWhispersToGroup()
+    local myName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+    local myBase = tostring(myName or ""):gsub("%-.+", "")
+
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local unit = "raid" .. i
+            if UnitExists(unit) and not UnitIsUnit(unit, "player") then
+                local targetName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+                if targetName and targetName ~= "" then
+                    SendRC("WHISPER", targetName)
+                end
+            end
+        end
+    elseif IsInGroup() then
+        for i = 1, 4 do
+            local unit = "party" .. i
+            if UnitExists(unit) then
+                local targetName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+                if targetName and targetName ~= "" then
+                    SendRC("WHISPER", targetName)
+                end
+            end
+        end
     end
 end
 
@@ -1385,8 +1464,10 @@ if IsInRaid() then
 elseif IsInGroup() then
     SendRC("PARTY")
     SendRC("INSTANCE_CHAT")
+    SendRCWhispersToGroup()
 elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
     SendRC("INSTANCE_CHAT")
+    SendRCWhispersToGroup()
 end
     end
 end
@@ -1548,6 +1629,7 @@ local ALWAYS_VISIBLE = {
 ------------------------------------------------
 local NON_HEALER_SPELL_SPECS = {
     [2825]   = { [262]=true, [263]=true, [264]=true }, -- Bloodlust
+	[20608]  = { [262]=true, [263]=true, [264]=true }, -- Reincarnation
     [80353]  = { [62]=true, [63]=true, [64]=true },    -- Time Warp
     [196718] = { [577]=true, [581]=true },             -- Darkness
     [51052]  = { [250]=true },                         -- AMZ
@@ -1586,6 +1668,7 @@ local SPEC_FILTER = {
     [98008]  = { [264] = true }, -- Spirit Link
     [114052] = { [264] = true }, -- Ascendance
     [207399] = { [264] = true }, -- Ancestral Protection Totem
+	[20608]  = { [262] = true, [263] = true, [264] = true }, -- Reincarnation
 
     -- PALADIN
     [31821]  = { [65] = true },  -- Aura Mastery
@@ -1647,6 +1730,12 @@ end
             known = true
         end
     end
+	
+	if not known and spellID == 20608 then
+    if select(2, UnitClass("player")) == "SHAMAN" then
+        known = true
+    end
+end
 
     if not known then
         allow = false
@@ -1710,6 +1799,7 @@ font = "Fonts\\FRIZQT__.TTF",
     barSpacing = 6,
     centerBars = true,
     hideUnused = false,
+	hideOutOfGroup = false,
     template   = "BAR_ONLY",
 
     spellTextOffsetX = 0,
@@ -2633,6 +2723,14 @@ end
 UpdateLayout = function()
     if not RC or not panel or not RaidCooldownsDB then return end
     if RC.suppressLayout then return end
+
+    if RC_UpdateGroupVisibility then
+        RC_UpdateGroupVisibility()
+        if RaidCooldownsDB.settings.hideOutOfGroup and not (IsInGroup() or IsInRaid()) then
+            HideAllBars()
+            return
+        end
+    end
 
     HideAllBars()
     if RC.gapFrame then RC.gapFrame:Hide() end
@@ -3721,12 +3819,12 @@ UIDropDownMenu_SetWidth(fontDrop, appearanceCard:GetWidth() - 48)
 
 
 controlsCard = CreateRightSection(COLUMN_WIDTH)
-controlsCard:SetHeight(160)
+controlsCard:SetHeight(138)
 controlsCard:SetWidth(COLUMN_WIDTH)
 
 controlsCard._height = 12
 controlsCard._last = nil
-controlsCard._minHeight = 120
+controlsCard._minHeight = 100
 
 
 ------------------------------------------------
@@ -3782,11 +3880,26 @@ lock:SetScript("OnClick", function(self)
     UpdatePanelMouseState()
     UpdatePanelBackground()
 
-        -- Register combat log tracking (safe to defer if in combat)
     UpdateBarMouseState()
 end)
 
+-- Hide when solo
+local hideOutOfGroup = CreateFrame("CheckButton", nil, controlsCard, "InterfaceOptionsCheckButtonTemplate")
+NormalizeCheckButton(hideOutOfGroup)
+hideOutOfGroup.Text:SetText("Hide when solo")
+hideOutOfGroup.Text:SetWidth(180)
+hideOutOfGroup.Text:SetWordWrap(false)
 
+hideOutOfGroup:SetChecked(RaidCooldownsDB.settings.hideOutOfGroup)
+hideOutOfGroup:SetScript("OnClick", function(self)
+    SaveProfileSetting("hideOutOfGroup", self:GetChecked())
+
+    if RC_UpdateGroupVisibility then
+        RC_UpdateGroupVisibility()
+    end
+
+    UpdateLayout()
+end)
 
 ------------------------------------------------
 -- 🧪 TEST MODE BUTTON
@@ -3856,10 +3969,11 @@ testBtn:SetScript("OnClick", function(self)
 end)
 
 
-controlsCard:Add(reset, 18)
-controlsCard:Add(center, 14)
-controlsCard:Add(lock, 14)
-controlsCard:Add(testBtn, 14)
+controlsCard:Add(reset, 8)
+controlsCard:Add(center, 4)
+controlsCard:Add(lock, 4)
+controlsCard:Add(hideOutOfGroup, 4)
+controlsCard:Add(testBtn, 4)
 
 
 
@@ -3868,7 +3982,7 @@ controlsCard:Add(testBtn, 14)
 panelSizeCard = CreateRightSection(COLUMN_WIDTH)
 panelSizeCard:SetWidth(COLUMN_WIDTH)
 panelSizeCard._fixed = true
-panelSizeCard:SetHeight(150)
+panelSizeCard:SetHeight(145)
 
 
 ------------------------------------------------
@@ -4957,7 +5071,111 @@ function UpdateGroupCooldown(group)
 end
 
 
+local function RC_GetSpellCooldownSafe(spellID)
+    spellID = tonumber(spellID)
+    if not spellID then return nil, nil end
 
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local info = C_Spell.GetSpellCooldown(spellID)
+        if type(info) == "table" then
+            return tonumber(info.startTime or 0), tonumber(info.duration or 0), info.isEnabled
+        end
+    end
+
+    if GetSpellCooldown then
+        local start, duration, enabled = GetSpellCooldown(spellID)
+        return tonumber(start or 0), tonumber(duration or 0), enabled
+    end
+
+    return nil, nil
+end
+
+function RC_SyncPlayerSpellCooldown(spellID)
+    spellID = tonumber(spellID)
+    if not spellID then return end
+
+    local start, duration = RC_GetSpellCooldownSafe(spellID)
+
+    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+    if not playerName or playerName == "" then return end
+
+    local playerBase = tostring(playerName):gsub("%-.+", "")
+
+    -- If Blizzard says the spell is ready, clear stale saved cooldown state.
+    if not start or not duration or start <= 0 or duration <= 1 then
+        for _, entry in ipairs(RC.entries or {}) do
+            local owner = entry.owner and tostring(entry.owner) or ""
+            local ownerBase = owner:gsub("%-.+", "")
+
+            if entry.spellID == spellID and (owner == playerName or owner == playerBase or ownerBase == playerBase) then
+                entry.cooldownStart = nil
+                entry.cooldownDuration = nil
+                entry.cooldownEnd = nil
+                entry.onCooldown = false
+                entry.hide = false
+
+                if RC_SaveCooldownState then
+                    RC_SaveCooldownState(entry)
+                end
+            end
+        end
+
+        if UpdateLayout then
+            UpdateLayout()
+        end
+
+        return
+    end
+
+    local remaining = (start + duration) - GetTime()
+    if remaining <= 0 then
+        for _, entry in ipairs(RC.entries or {}) do
+            local owner = entry.owner and tostring(entry.owner) or ""
+            local ownerBase = owner:gsub("%-.+", "")
+
+            if entry.spellID == spellID and (owner == playerName or owner == playerBase or ownerBase == playerBase) then
+                entry.cooldownStart = nil
+                entry.cooldownDuration = nil
+                entry.cooldownEnd = nil
+                entry.onCooldown = false
+                entry.hide = false
+
+                if RC_SaveCooldownState then
+                    RC_SaveCooldownState(entry)
+                end
+            end
+        end
+
+        if UpdateLayout then
+            UpdateLayout()
+        end
+
+        return
+    end
+
+    for _, entry in ipairs(RC.entries or {}) do
+        local owner = entry.owner and tostring(entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+
+        if entry.spellID == spellID and (owner == playerName or owner == playerBase or ownerBase == playerBase) then
+            entry.cooldownStart = start
+            entry.cooldownDuration = duration
+            entry.cooldownEnd = start + duration
+            entry.onCooldown = true
+            entry.hide = false
+
+            if RC_SaveCooldownState then
+                RC_SaveCooldownState(entry)
+            end
+
+            if UpdateLayout then
+                UpdateLayout()
+            end
+
+            return true
+        end
+    end
+end
 
 
 ------------------------------------------------
@@ -7954,7 +8172,7 @@ SlashCmdList.RAIDCOOLDOWNS = function()
     UpdatePanelMouseState()
     UpdatePanelBackground()
 
-        -- Register combat log tracking (safe to defer if in combat)
+       
 
     if RC.locked then
         print("RaidCooldowns locked")
@@ -7974,7 +8192,7 @@ SlashCmdList.RAIDCDUNLOCK = function()
     UpdatePanelMouseState()
     UpdatePanelBackground()
 
-        -- Register combat log tracking (safe to defer if in combat)
+        
 
     print("RaidCooldowns force-unlocked")
 
