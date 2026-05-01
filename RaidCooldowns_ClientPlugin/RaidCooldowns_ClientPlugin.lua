@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.1.3"
+local VERSION = "1.1.4"
 
 local TRACKED = {
     -- Druid
@@ -21,6 +21,7 @@ local TRACKED = {
     [207399] = true,
     [192077] = true,
     [2825] = true,
+	[20608] = true, 
 
     -- Priest
     [64843] = true,
@@ -112,6 +113,7 @@ local NON_HEALER_SPELL_SPECS = {
     [23920] = { [71] = true, [72] = true, [73] = true },
     [31884] = { [65] = true, [66] = true, [70] = true },
     [192077] = { [262] = true, [263] = true, [264] = true },
+	[20608] = { [262] = true, [263] = true, [264] = true }, 
 }
 
 local SPEC_FILTER = {
@@ -134,6 +136,7 @@ local SPEC_FILTER = {
     [98008] = { [264] = true },
     [114052] = { [264] = true },
     [207399] = { [264] = true },
+	[20608] = { [262] = true, [263] = true, [264] = true }, 
 
     -- Paladin
     [31821] = { [65] = true },
@@ -160,6 +163,7 @@ local SPELL_CLASS = {
     [207399] = "SHAMAN",
     [192077] = "SHAMAN",
     [2825] = "SHAMAN",
+	[20608] = "SHAMAN",
     [64843] = "PRIEST",
     [47788] = "PRIEST",
     [33206] = "PRIEST",
@@ -242,7 +246,12 @@ local function PlayerKnowsTrackedSpell(spellID)
             index = index + 1
         end
     end
-
+if spellID == 20608 then
+    local _, playerClass = UnitClass("player")
+    if playerClass == "SHAMAN" then
+        return true
+    end
+end
     return false
 end
 
@@ -380,15 +389,63 @@ if unit ~= "player" and unit ~= "pet" then
 end
 
 spellID = tonumber(spellID)
+
+-- Shaman Reincarnation: normalize actual self-res cast to tracked passive cooldown
+if spellID == 21169 then
+    spellID = 20608
+end
+
 if not spellID or not TRACKED[spellID] then
     return
 end
 
-local channel = PickChannel()
-if not channel then
-    return
+local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+local payload = tostring(playerName) .. "|" .. tostring(spellID)
+
+local sent = {}
+
+local function SendCooldown(channel, target)
+    if not channel then return end
+
+    local key = tostring(channel) .. ":" .. tostring(target or "")
+    if sent[key] then return end
+    sent[key] = true
+
+    Send(PREFIX_SPELLS, payload, channel, target)
 end
 
-local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-Send(PREFIX_SPELLS, tostring(playerName) .. "|" .. tostring(spellID), channel)
+local function SendCooldownWhispersToGroup()
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local unitID = "raid" .. i
+            if UnitExists(unitID) and not UnitIsUnit(unitID, "player") then
+                local targetName = GetUnitName and GetUnitName(unitID, true) or UnitName(unitID)
+                if targetName and targetName ~= "" then
+                    SendCooldown("WHISPER", targetName)
+                end
+            end
+        end
+    elseif IsInGroup() then
+        for i = 1, 4 do
+            local unitID = "party" .. i
+            if UnitExists(unitID) then
+                local targetName = GetUnitName and GetUnitName(unitID, true) or UnitName(unitID)
+                if targetName and targetName ~= "" then
+                    SendCooldown("WHISPER", targetName)
+                end
+            end
+        end
+    end
+end
+
+if IsInRaid() then
+    SendCooldown("RAID")
+elseif IsInGroup() then
+    SendCooldown("PARTY")
+    SendCooldown("INSTANCE_CHAT")
+    SendCooldownWhispersToGroup()
+elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+    SendCooldown("INSTANCE_CHAT")
+    SendCooldownWhispersToGroup()
+end
 end)
