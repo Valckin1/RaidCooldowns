@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.1.4"
+local VERSION = "1.1.5"
 
 local TRACKED = {
     -- Druid
@@ -440,6 +440,7 @@ end
 
 if IsInRaid() then
     SendCooldown("RAID")
+    SendCooldownWhispersToGroup()
 elseif IsInGroup() then
     SendCooldown("PARTY")
     SendCooldown("INSTANCE_CHAT")
