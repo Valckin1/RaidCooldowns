@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.1.5"
+local VERSION = "1.1.6"
 
 local TRACKED = {
     -- Druid
@@ -276,14 +276,14 @@ local function IsSpellAllowedForCurrentSpec(spellID, playerClass, specID)
 end
 
 local function PickChannel()
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        return "INSTANCE_CHAT"
-    end
     if IsInRaid() then
         return "RAID"
     end
     if IsInGroup() then
         return "PARTY"
+    end
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        return "INSTANCE_CHAT"
     end
     return nil
 end
