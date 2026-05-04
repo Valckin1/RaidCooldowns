@@ -303,7 +303,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.1"
+RC.version = "0.4.2"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -1201,6 +1201,8 @@ end
 
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
+	
+
 
   
 
@@ -1306,8 +1308,7 @@ end
 if prefix ~= "RAIDCOOLDOWNS" then return end
 if type(msg) ~= "string" or msg == "" then return end
 
-
-    local sourceName, spell = msg:match("^(.-)|(%d+)$")
+local sourceName, spell = msg:match("^(.-)|(%d+)$")
 local spellID
 
 if sourceName and spell then
@@ -1315,6 +1316,17 @@ if sourceName and spell then
 else
     sourceName = sender and string.format("%s", sender) or ""
     spellID = tonumber(msg)
+end
+
+-- If sender includes a realm but the payload name does not, use sender.
+-- Example: msg="Nikirû|31884", sender="Nikirû-Stormrage"
+if sourceName and sender then
+    local sourceText = tostring(sourceName)
+    local senderText = tostring(sender)
+
+    if sourceText ~= "" and not sourceText:find("-", 1, true) and senderText:find("-", 1, true) then
+        sourceName = senderText
+    end
 end
 
 if spellID == 264667 then
@@ -1366,16 +1378,97 @@ end
     return
 end
 
-if event == "SPELL_UPDATE_COOLDOWN" or event == "SPELLS_CHANGED" or event == "PLAYER_LOGIN" then
+if event == "SPELL_UPDATE_COOLDOWN"
+or event == "SPELLS_CHANGED"
+or event == "PLAYER_LOGIN"
+or event == "PLAYER_ENTERING_WORLD"
+or event == "GROUP_ROSTER_UPDATE" then
+
     if C_Timer and C_Timer.After then
-        C_Timer.After(0.2, function()
+        C_Timer.After(0.3, function()
             if RC_SyncPlayerSpellCooldown then
                 RC_SyncPlayerSpellCooldown(20608) -- Shaman Reincarnation
+            end
+        end)
+
+        C_Timer.After(1.0, function()
+            if RC_SyncPlayerSpellCooldown then
+                RC_SyncPlayerSpellCooldown(20608) -- clear stale state after roster rebuild
             end
         end)
     else
         if RC_SyncPlayerSpellCooldown then
             RC_SyncPlayerSpellCooldown(20608)
+        end
+    end
+end
+
+function RC_BroadcastMyActiveCooldowns()
+    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+    if not playerName or playerName == "" then return end
+
+    local playerBase = tostring(playerName):gsub("%-.+", "")
+
+    for _, entry in ipairs(RC.entries or {}) do
+        local owner = entry.owner and tostring(entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+
+        if entry.onCooldown
+        and entry.spellID
+        and (owner == playerName or owner == playerBase or ownerBase == playerBase) then
+
+            local payload = tostring(playerName) .. "|" .. tostring(entry.spellID)
+            local sent = {}
+
+            local function SendRC(channel, target)
+                if not channel then return end
+
+                local key = tostring(channel) .. ":" .. tostring(target or "")
+                if sent[key] then return end
+                sent[key] = true
+
+                if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+                    C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
+                elseif SendAddonMessage then
+                    SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
+                end
+            end
+
+            local function SendWhispersToGroup()
+                if IsInRaid() then
+                    for i = 1, GetNumGroupMembers() do
+                        local unit = "raid" .. i
+                        if UnitExists(unit) and not UnitIsUnit(unit, "player") then
+                            local targetName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+                            if targetName and targetName ~= "" then
+                                SendRC("WHISPER", targetName)
+                            end
+                        end
+                    end
+                elseif IsInGroup() then
+                    for i = 1, 4 do
+                        local unit = "party" .. i
+                        if UnitExists(unit) then
+                            local targetName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+                            if targetName and targetName ~= "" then
+                                SendRC("WHISPER", targetName)
+                            end
+                        end
+                    end
+                end
+            end
+
+            if IsInRaid() then
+                SendRC("RAID")
+                SendWhispersToGroup()
+            elseif IsInGroup() then
+                SendRC("PARTY")
+                SendRC("INSTANCE_CHAT")
+                SendWhispersToGroup()
+            elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+                SendRC("INSTANCE_CHAT")
+                SendWhispersToGroup()
+            end
         end
     end
 end
@@ -1454,6 +1547,7 @@ end
 
 if IsInRaid() then
     SendRC("RAID")
+    SendRCWhispersToGroup()
 elseif IsInGroup() then
     SendRC("PARTY")
     SendRC("INSTANCE_CHAT")
@@ -1480,12 +1574,18 @@ local didLocalMatch = false
     for _, entry in ipairs(RC.entries or {}) do
         local owner = entry.owner and string.format("%s", entry.owner) or ""
         local ownerBase = owner:gsub("%-.+", "")
-        if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
-            UpdateGroupCooldown(entry)
-			didLocalMatch = true
-           
-            break
+if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
+    UpdateGroupCooldown(entry)
+    didLocalMatch = true
+
+    if UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet") then
+        if RC_BroadcastMyActiveCooldowns then
+            C_Timer.After(0.1, RC_BroadcastMyActiveCooldowns)
         end
+    end
+
+    break
+end
     end
 
     return
