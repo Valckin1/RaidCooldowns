@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.1.6"
+local VERSION = "1.1.7"
 
 local TRACKED = {
     -- Druid
@@ -301,7 +301,38 @@ local function EnsurePrefixes()
     end
 end
 
-local function Send(prefix, msg, channel, target)
+local pendingCooldownComms = {}
+
+local function IsCommRestricted()
+    if not UnitAffectingCombat("player") then
+        return false
+    end
+
+    local inInstance, instanceType = IsInInstance()
+
+    if instanceType == "raid" then
+        return true
+    end
+
+    if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive then
+        if C_ChallengeMode.IsChallengeModeActive() then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function QueueCooldownComm(prefix, msg, channel, target)
+    pendingCooldownComms[#pendingCooldownComms + 1] = {
+        prefix = prefix,
+        msg = msg,
+        channel = channel,
+        target = target,
+    }
+end
+
+local function SendRaw(prefix, msg, channel, target)
     if not channel then
         return
     end
@@ -313,6 +344,33 @@ local function Send(prefix, msg, channel, target)
 
     if SendAddonMessage then
         SendAddonMessage(prefix, msg, channel, target)
+    end
+end
+
+local function Send(prefix, msg, channel, target)
+    if not channel then
+        return
+    end
+
+    if prefix == PREFIX_SPELLS and IsCommRestricted() then
+        QueueCooldownComm(prefix, msg, channel, target)
+        return
+    end
+
+    SendRaw(prefix, msg, channel, target)
+end
+
+local function FlushQueuedCooldownComms()
+    if IsCommRestricted() then return end
+    if not pendingCooldownComms or #pendingCooldownComms == 0 then return end
+
+    local queued = pendingCooldownComms
+    pendingCooldownComms = {}
+
+    for _, item in ipairs(queued) do
+        if item and item.prefix and item.msg and item.channel then
+            SendRaw(item.prefix, item.msg, item.channel, item.target)
+        end
     end
 end
 
@@ -347,6 +405,9 @@ end
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("ENCOUNTER_END")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("SPELLS_CHANGED")
@@ -359,6 +420,15 @@ frame:SetScript("OnEvent", function(_, event, ...)
         C_Timer.After(1.0, BroadcastHello)
         return
     end
+	
+	if event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_ENTERING_WORLD" or event == "ENCOUNTER_END" then
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.5, FlushQueuedCooldownComms)
+    else
+        FlushQueuedCooldownComms()
+    end
+    return
+end
 
     if event == "GROUP_ROSTER_UPDATE" then
         C_Timer.After(0.25, BroadcastHello)

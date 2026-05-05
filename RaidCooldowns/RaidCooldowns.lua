@@ -303,7 +303,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.2"
+RC.version = "0.4.3"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -824,6 +824,75 @@ ev:RegisterEvent("UNIT_HEALTH")
 ev:RegisterEvent("CHAT_MSG_ADDON")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 
+
+RC.pendingCooldownComms = RC.pendingCooldownComms or {}
+
+local function RC_IsCommRestricted()
+    -- Treat raid boss combat / Mythic+ combat as restricted.
+    -- This avoids trying to force addon comms during contexts where WoW may block them.
+    if not UnitAffectingCombat("player") then
+        return false
+    end
+
+    local inInstance, instanceType = IsInInstance()
+
+    if instanceType == "raid" then
+        return true
+    end
+
+    if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive then
+        if C_ChallengeMode.IsChallengeModeActive() then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function RC_QueueCooldownComm(prefix, payload, channel, target)
+    RC.pendingCooldownComms = RC.pendingCooldownComms or {}
+
+    table.insert(RC.pendingCooldownComms, {
+        prefix = prefix,
+        payload = payload,
+        channel = channel,
+        target = target,
+    })
+end
+
+local function RC_SendAddonMessageSafe(prefix, payload, channel, target)
+    if not prefix or not payload or not channel then return end
+
+    if RC_IsCommRestricted() then
+        RC_QueueCooldownComm(prefix, payload, channel, target)
+        return
+    end
+
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(prefix, payload, channel, target)
+    elseif SendAddonMessage then
+        SendAddonMessage(prefix, payload, channel, target)
+    end
+end
+
+local function RC_FlushQueuedCooldownComms()
+    if not RC.pendingCooldownComms or #RC.pendingCooldownComms == 0 then return end
+    if RC_IsCommRestricted() then return end
+
+    local queued = RC.pendingCooldownComms
+    RC.pendingCooldownComms = {}
+
+    for _, item in ipairs(queued) do
+        if item and item.prefix and item.payload and item.channel then
+            if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+                C_ChatInfo.SendAddonMessage(item.prefix, item.payload, item.channel, item.target)
+            elseif SendAddonMessage then
+                SendAddonMessage(item.prefix, item.payload, item.channel, item.target)
+            end
+        end
+    end
+end
+
 function RC_BroadcastSenderHello()
     local csv = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
     local payload = "HELLO;" .. tostring(RC.version) .. ";" .. tostring(csv)
@@ -1133,6 +1202,10 @@ end
 
 if event == "ENCOUNTER_END" then
     local encounterID, encounterName, difficultyID, groupSize, success = ...
+	
+	if RC_FlushQueuedCooldownComms then
+    C_Timer.After(1.0, RC_FlushQueuedCooldownComms)
+end
 
     -- Only reset cooldowns after raid encounters.
     -- Do NOT reset after Mythic+ / dungeon bosses.
@@ -1194,10 +1267,14 @@ end
     return
 end
 
-    if event == "PLAYER_REGEN_ENABLED" then
-        SafeRefreshLayout()
-        return
+   if event == "PLAYER_REGEN_ENABLED" then
+    if RC_FlushQueuedCooldownComms then
+        C_Timer.After(0.5, RC_FlushQueuedCooldownComms)
     end
+
+    SafeRefreshLayout()
+    return
+end
 
 if event == "CHAT_MSG_ADDON" then
     local prefix, msg, channel, sender = ...
@@ -1427,11 +1504,7 @@ function RC_BroadcastMyActiveCooldowns()
                 if sent[key] then return end
                 sent[key] = true
 
-                if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-                    C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
-                elseif SendAddonMessage then
-                    SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
-                end
+               RC_SendAddonMessageSafe("RAIDCOOLDOWNS", payload, channel, target)
             end
 
             local function SendWhispersToGroup()
@@ -1511,11 +1584,7 @@ local function SendRC(channel, target)
 
    
 
-    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-        C_ChatInfo.SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
-    elseif SendAddonMessage then
-        SendAddonMessage("RAIDCOOLDOWNS", payload, channel, target)
-    end
+   RC_SendAddonMessageSafe("RAIDCOOLDOWNS", payload, channel, target)
 end
 
 local function SendRCWhispersToGroup()
@@ -6486,7 +6555,7 @@ local managementTitle, managementSep =
 	
 	
 if not ProfilesRightStack then
-    print("ProfilesRightStack not initialized")
+   
     return
 end
 
@@ -6800,7 +6869,7 @@ RefreshTemplateDropdown = function()
 
     local current = RaidCooldownsDB.settings.template
 	
-	 print("Template on refresh:", current)
+	 
 
     UIDropDownMenu_SetSelectedValue(templateDrop, current)
 
@@ -7094,7 +7163,7 @@ end
 function BuildSpecProfileUI()
 
     if InCombatLockdown() then
-        print("BuildSpecProfileUI BLOCKED (combat)")
+        
         return
     end
 
@@ -7224,12 +7293,12 @@ btn:SetScript("OnClick", function()
     -- If already assigned → remove override
     if assignedProfile == currentProfile then
         RaidCooldownsDB.specProfiles[specID] = nil
-        print("Removed spec override for specID", specID)
+        
 
     -- Otherwise assign current profile
     else
         RaidCooldownsDB.specProfiles[specID] = currentProfile
-        print("Assigned profile", currentProfile, "to specID", specID)
+        
     end
 
     UpdateSpecButtonStates()
