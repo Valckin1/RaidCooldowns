@@ -66,6 +66,19 @@ function RC_Now()
     return (GetServerTime and GetServerTime()) or time()
 end
 
+function RC_HasRecentSender(baseName)
+    baseName = RC_NormalizeName(baseName or "")
+    if baseName == "" then return false end
+
+    local seen = RC and RC.senderSeen and RC.senderSeen[baseName]
+    if not seen or not seen.lastSeen then
+        return false
+    end
+
+    -- Only count addon/client users seen in this session recently.
+    return (RC_Now() - tonumber(seen.lastSeen or 0)) <= 180
+end
+
 function RC_GetCooldownKey(owner, spellID)
     owner = tostring(owner or "")
     spellID = tonumber(spellID)
@@ -303,7 +316,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.3"
+RC.version = "0.4.4"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -893,6 +906,27 @@ local function RC_FlushQueuedCooldownComms()
     end
 end
 
+function RC_RequestSenderStatus()
+    local payload = "PING;" .. tostring(RC.version or "0") .. ";EMPTY"
+
+    local channel
+    if IsInRaid() then
+        channel = "RAID"
+    elseif IsInGroup() then
+        channel = "PARTY"
+    elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        channel = "INSTANCE_CHAT"
+    end
+
+    if not channel then return end
+
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        C_ChatInfo.SendAddonMessage(SENDER_PREFIX, payload, channel)
+    elseif SendAddonMessage then
+        SendAddonMessage(SENDER_PREFIX, payload, channel)
+    end
+end
+
 function RC_BroadcastSenderHello()
     local csv = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
     local payload = "HELLO;" .. tostring(RC.version) .. ";" .. tostring(csv)
@@ -1057,6 +1091,10 @@ UpdateProfileStatusText()
             end
         end
 RC_BroadcastSenderHello()
+
+if RC_RequestSenderStatus then
+    C_Timer.After(1.5, RC_RequestSenderStatus)
+end
     end)
 
     return
@@ -1065,6 +1103,11 @@ end
 if event == "GROUP_ROSTER_UPDATE" then
     RegisterSpellcastUnits()
     RC_BroadcastSenderHello()
+
+    if RC_RequestSenderStatus then
+        C_Timer.After(1.0, RC_RequestSenderStatus)
+    end
+
     if RC and RC.dragging then return end
     SafeRefreshLayout()
     return
@@ -2364,16 +2407,18 @@ if allow and unit == "player" then
     end
 end
 
--- ONLY SHOW OTHER PLAYERS IF THEY WERE CONFIRMED BY FULL ADDON / CLIENT PLUGIN
+-- ONLY SHOW OTHER PLAYERS IF THEY WERE RECENTLY CONFIRMED BY FULL ADDON / CLIENT PLUGIN
 if allow and unit ~= "player" then
-local hasSpellList =
+    local hasSpellList =
         RaidCooldownsDB
         and RaidCooldownsDB.senderSpells
         and RaidCooldownsDB.senderSpells[baseName]
-       and RaidCooldownsDB.senderSpells[baseName] ~= ""
-and RaidCooldownsDB.senderSpells[baseName] ~= "EMPTY"
+        and RaidCooldownsDB.senderSpells[baseName] ~= ""
+        and RaidCooldownsDB.senderSpells[baseName] ~= "EMPTY"
 
-    if not hasSpellList then
+    local recentlySeen = RC_HasRecentSender and RC_HasRecentSender(baseName)
+
+    if not hasSpellList or not recentlySeen then
         allow = false
     end
 end
