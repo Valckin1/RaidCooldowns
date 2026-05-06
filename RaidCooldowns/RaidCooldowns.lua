@@ -316,7 +316,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.4"
+RC.version = "0.4.5"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -841,24 +841,6 @@ ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 RC.pendingCooldownComms = RC.pendingCooldownComms or {}
 
 local function RC_IsCommRestricted()
-    -- Treat raid boss combat / Mythic+ combat as restricted.
-    -- This avoids trying to force addon comms during contexts where WoW may block them.
-    if not UnitAffectingCombat("player") then
-        return false
-    end
-
-    local inInstance, instanceType = IsInInstance()
-
-    if instanceType == "raid" then
-        return true
-    end
-
-    if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive then
-        if C_ChallengeMode.IsChallengeModeActive() then
-            return true
-        end
-    end
-
     return false
 end
 

@@ -5,7 +5,7 @@
 local PREFIX_SPELLS = "RAIDCOOLDOWNS"
 local PREFIX_HANDSHAKE = "RAIDCD_SENDER"
 local ADDON_ID = "raidcooldowns_clientplugin"
-local VERSION = "1.1.7"
+local VERSION = "1.1.8"
 
 local TRACKED = {
     -- Druid
@@ -304,22 +304,6 @@ end
 local pendingCooldownComms = {}
 
 local function IsCommRestricted()
-    if not UnitAffectingCombat("player") then
-        return false
-    end
-
-    local inInstance, instanceType = IsInInstance()
-
-    if instanceType == "raid" then
-        return true
-    end
-
-    if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive then
-        if C_ChallengeMode.IsChallengeModeActive() then
-            return true
-        end
-    end
-
     return false
 end
 
