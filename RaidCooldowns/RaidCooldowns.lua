@@ -75,8 +75,11 @@ function RC_HasRecentSender(baseName)
         return false
     end
 
-    -- Only count addon/client users seen in this session recently.
-    return (RC_Now() - tonumber(seen.lastSeen or 0)) <= 180
+    if UnitAffectingCombat("player") then
+        return true
+    end
+
+    return (RC_Now() - tonumber(seen.lastSeen or 0)) <= 300
 end
 
 function RC_GetCooldownKey(owner, spellID)
@@ -101,19 +104,28 @@ end
 
 function RC_SaveCooldownState(entry)
     if not entry then return end
+
     local key = RC_GetCooldownKey(entry.owner, entry.spellID)
     if not key then return end
 
     RaidCooldownsDB = RaidCooldownsDB or {}
     RaidCooldownsDB.activeCooldowns = RaidCooldownsDB.activeCooldowns or {}
 
-    if entry.onCooldown and tonumber(entry.cooldownDuration or 0) > 0 then
-        local duration = tonumber(entry.cooldownDuration) or 0
+    if entry.onCooldown
+    and tonumber(entry.cooldownDuration or 0) > 0
+    and tonumber(entry.cooldownEnd or 0) > GetTime() then
+
+        local remaining = entry.cooldownEnd - GetTime()
+
         RaidCooldownsDB.activeCooldowns[key] = {
             owner = entry.owner,
             spellID = entry.spellID,
-            duration = duration,
-            endAtServer = RC_Now() + duration,
+
+            -- original cooldown duration
+            duration = tonumber(entry.cooldownDuration) or remaining,
+
+            -- actual remaining time, converted to server time
+            endAtServer = RC_Now() + remaining,
         }
     else
         RaidCooldownsDB.activeCooldowns[key] = nil
@@ -122,6 +134,7 @@ end
 
 function RC_RestoreCooldownState(entry)
     if not entry then return end
+
     local key = RC_GetCooldownKey(entry.owner, entry.spellID)
     if not key then return end
 
@@ -137,10 +150,17 @@ function RC_RestoreCooldownState(entry)
         return
     end
 
-    local startNow = GetTime()
-    entry.cooldownStart = startNow
-    entry.cooldownDuration = remaining
-    entry.cooldownEnd = startNow + remaining
+    local originalDuration = tonumber(data.duration or 0)
+
+    if originalDuration <= 0 or originalDuration < remaining then
+        originalDuration = RC_GetEffectiveCooldown(entry.spellID) or remaining
+    end
+
+    local now = GetTime()
+
+    entry.cooldownDuration = originalDuration
+    entry.cooldownEnd = now + remaining
+    entry.cooldownStart = entry.cooldownEnd - originalDuration
     entry.onCooldown = true
 end
 
@@ -274,6 +294,17 @@ local HEALING_COOLDOWNS = {
 }
 
 
+local RC_COOLDOWN_AURA_MAP = {
+    [31884]  = 31884,  -- Avenging Wrath
+    [31821]  = 31821,  -- Aura Mastery
+    [740]    = 740,    -- Tranquility
+    [64843]  = 64843,  -- Divine Hymn
+    [115310] = 115310, -- Revival
+    [114052] = 114052, -- Ascendance
+    [374227] = 374227, -- Zephyr
+}
+
+
 -- INTERNAL STATE
 ------------------------------------------------
 local RC = {
@@ -316,7 +347,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.5"
+RC.version = "0.4.6"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -561,21 +592,25 @@ end
 ------------------------------------------------
 local ev = CreateFrame("Frame")
 
--- Register UNIT_SPELLCAST_SUCCEEDED for all group unit tokens (no CLEU).
--- Retail clients are picky about which unit tokens are registered, so we do them explicitly.
 function RegisterSpellcastUnits()
-    -- Re-register UNIT_SPELLCAST_SUCCEEDED for all relevant unit tokens in ONE call.
-    -- Important: RegisterUnitEvent replaces the unit list each time you call it.
     ev:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    ev:UnregisterEvent("UNIT_AURA")
 
-   local units = {
-    "player",
-    "pet",
-}
-    for idx = 1, 4 do units[#units+1] = "party" .. idx end
-    for idx = 1, 40 do units[#units+1] = "raid" .. idx end
+    local units = {
+        "player",
+        "pet",
+    }
+
+    for idx = 1, 4 do
+        units[#units + 1] = "party" .. idx
+    end
+
+    for idx = 1, 40 do
+        units[#units + 1] = "raid" .. idx
+    end
 
     ev:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unpack(units))
+    ev:RegisterUnitEvent("UNIT_AURA", unpack(units))
 end
 
 ------------------------------------------------
@@ -835,6 +870,7 @@ ev:RegisterEvent("SPELLS_CHANGED")
 ev:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 ev:RegisterEvent("UNIT_HEALTH")
 ev:RegisterEvent("CHAT_MSG_ADDON")
+ev:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 
@@ -857,11 +893,6 @@ end
 
 local function RC_SendAddonMessageSafe(prefix, payload, channel, target)
     if not prefix or not payload or not channel then return end
-
-    if RC_IsCommRestricted() then
-        RC_QueueCooldownComm(prefix, payload, channel, target)
-        return
-    end
 
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
         C_ChatInfo.SendAddonMessage(prefix, payload, channel, target)
@@ -931,8 +962,81 @@ end
     end
 end
 
+local function RC_BaseNameForCompare(name)
+    name = tostring(name or "")
+    name = name:gsub("|c%x%x%x%x%x%x%x%x", "")
+    name = name:gsub("|r", "")
+    name = name:gsub("%s+", "")
+    return name:gsub("%-.+$", "")
+end
+
+local function RC_StartCooldownByObservedName(sourceName, spellID, reason)
+    spellID = tonumber(spellID)
+    if not spellID then return false end
+
+    if spellID == 264667 then
+        spellID = 272678
+    elseif spellID == 21169 then
+        spellID = 20608
+    end
+
+    if not HEALING_COOLDOWNS or not HEALING_COOLDOWNS[spellID] then
+        return false
+    end
+
+    local sourceBase = RC_BaseNameForCompare(sourceName)
+    if sourceBase == "" then return false end
+
+    local matched = false
+
+    for _, entry in ipairs(RC.entries or {}) do
+        if tonumber(entry.spellID) == spellID then
+            local owner = tostring(entry.owner or "")
+            local ownerBase = RC_BaseNameForCompare(owner)
+
+            if owner == sourceName or ownerBase == sourceBase then
+                if RC and RC.debugComms then
+                    print("|cff00ff00RC CLEU CD MATCH|r",
+                        "source=", tostring(sourceName),
+                        "owner=", tostring(owner),
+                        "spellID=", tostring(spellID),
+                        "reason=", tostring(reason)
+                    )
+                end
+
+                UpdateGroupCooldown(entry)
+                matched = true
+            end
+        end
+    end
+
+    if matched then
+        UpdateLayout()
+
+        if not InCombatLockdown() then
+            RebuildOrderedList()
+            UpdateLayout()
+        end
+
+        return true
+    end
+
+    if RC and RC.debugComms then
+        print("|cffff5555RC CLEU CD NO MATCH|r",
+            "source=", tostring(sourceName),
+            "sourceBase=", tostring(sourceBase),
+            "spellID=", tostring(spellID),
+            "reason=", tostring(reason)
+        )
+    end
+
+    return false
+end
 
 ev:SetScript("OnEvent", function(self, event, ...)
+
+
+
 
 if event == "ADDON_LOADED" then
     local addonNameLoaded = ...
@@ -1004,7 +1108,8 @@ if event == "UNIT_CONNECTION" then
 end
 
  if event == "PLAYER_LOGIN" then
-
+ 
+  RegisterSpellcastUnits()
     C_Timer.After(0.5, function()
 	  RaidCooldownsDB = RaidCooldownsDB or {}
 	  RaidCooldownsDB.activeCooldowns = RaidCooldownsDB.activeCooldowns or {}
@@ -1050,7 +1155,7 @@ UpdateOwners()
                RaidCooldownsDB.senderSpells[myBase] = (RC_SenderHashFromDB and RC_SenderHashFromDB()) or "EMPTY"
             end
         end
-        RegisterSpellcastUnits()
+      
 PreCreateAllBars()
 UpdateBarMouseState()
 RebuildOrderedList()
@@ -1086,11 +1191,18 @@ if event == "GROUP_ROSTER_UPDATE" then
     RegisterSpellcastUnits()
     RC_BroadcastSenderHello()
 
-    if RC_RequestSenderStatus then
+    if RC_RequestSenderStatus and not UnitAffectingCombat("player") then
         C_Timer.After(1.0, RC_RequestSenderStatus)
     end
 
     if RC and RC.dragging then return end
+
+    -- Avoid layout flashing during pull countdown / combat prep.
+    if UnitAffectingCombat("player") or RC.encounterActive then
+        pendingLayoutUpdate = true
+        return
+    end
+
     SafeRefreshLayout()
     return
 end
@@ -1222,10 +1334,12 @@ or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" then
 end
 
 if event == "ENCOUNTER_START" then
+RC.encounterActive = true
     return
 end
 
 if event == "ENCOUNTER_END" then
+RC.encounterActive = false
     local encounterID, encounterName, difficultyID, groupSize, success = ...
 	
 	if RC_FlushQueuedCooldownComms then
@@ -1306,7 +1420,7 @@ if event == "CHAT_MSG_ADDON" then
 	
 
 
-  
+ 
 
 
 
@@ -1410,63 +1524,123 @@ end
 if prefix ~= "RAIDCOOLDOWNS" then return end
 if type(msg) ~= "string" or msg == "" then return end
 
+local function RC_CleanNameForCompare(name)
+    name = tostring(name or "")
+    name = name:gsub("|c%x%x%x%x%x%x%x%x", "")
+    name = name:gsub("|r", "")
+    name = name:gsub("%s+", "")
+    return name
+end
+
+local function RC_BaseName(name)
+    name = RC_CleanNameForCompare(name)
+    return name:gsub("%-.+$", "")
+end
+
+local function RC_FindUnitFullNameByBase(baseName)
+    baseName = RC_BaseName(baseName)
+    if baseName == "" then return nil end
+
+    local units = { "player", "pet" }
+
+    for i = 1, 4 do
+        units[#units + 1] = "party" .. i
+    end
+
+    for i = 1, 40 do
+        units[#units + 1] = "raid" .. i
+    end
+
+    for _, unit in ipairs(units) do
+        if UnitExists(unit) then
+            local full = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+            if full and RC_BaseName(full) == baseName then
+                return full
+            end
+        end
+    end
+
+    return nil
+end
+
 local sourceName, spell = msg:match("^(.-)|(%d+)$")
 local spellID
 
 if sourceName and spell then
     spellID = tonumber(spell)
 else
-    sourceName = sender and string.format("%s", sender) or ""
-    spellID = tonumber(msg)
-end
+    local cmd, a, b = strsplit(";", msg)
 
--- If sender includes a realm but the payload name does not, use sender.
--- Example: msg="Nikirû|31884", sender="Nikirû-Stormrage"
-if sourceName and sender then
-    local sourceText = tostring(sourceName)
-    local senderText = tostring(sender)
-
-    if sourceText ~= "" and not sourceText:find("-", 1, true) and senderText:find("-", 1, true) then
-        sourceName = senderText
+    if tonumber(cmd) then
+        sourceName = sender or ""
+        spellID = tonumber(cmd)
+    elseif tonumber(a) then
+        sourceName = sender or ""
+        spellID = tonumber(a)
+    elseif tonumber(b) then
+        sourceName = a or sender or ""
+        spellID = tonumber(b)
+    else
+        sourceName = sender or ""
+        spellID = tonumber(msg)
     end
 end
+
+spellID = tonumber(spellID)
 
 if spellID == 264667 then
     spellID = 272678
 end
 
+if spellID == 21169 then
+    spellID = 20608
+end
+
+sourceName = RC_CleanNameForCompare(sourceName)
+local senderName = RC_CleanNameForCompare(sender)
+
+if sourceName == "" then
+    sourceName = senderName
+end
+
+-- Prefer actual raid/party full name if payload only has base name.
+local resolvedSource = RC_FindUnitFullNameByBase(sourceName)
+if resolvedSource and resolvedSource ~= "" then
+    sourceName = resolvedSource
+end
 
 if not spellID or not sourceName or sourceName == "" then return end
 
+local sourceBase = RC_BaseName(sourceName)
+local senderBase = RC_BaseName(senderName)
 
 
-local myName = (GetUnitName and GetUnitName("player", true)) or (UnitName and UnitName("player")) or ""
-
-
-  local sourceBase = sourceName:gsub("%-.+", "")
-local senderName = sender and string.format("%s", sender) or ""
-local senderBase = senderName:gsub("%-.+", "")
 
 local matched = false
 
-
 for _, entry in ipairs(RC.entries or {}) do
-    if entry.spellID == spellID then
-        local owner = entry.owner and string.format("%s", entry.owner) or ""
-        local ownerBase = owner:gsub("%-.+", "")
+    local entrySpellID = tonumber(entry.spellID)
 
-        if owner == sourceName
-        or owner == senderName
-        or ownerBase == sourceBase
-        or ownerBase == senderBase then
+    if entrySpellID == spellID then
+        local owner = RC_CleanNameForCompare(entry.owner)
+        local ownerBase = RC_BaseName(owner)
 
+        local nameMatches =
+            owner == sourceName
+            or owner == senderName
+            or ownerBase == sourceBase
+            or ownerBase == senderBase
 
+        if nameMatches then
+            
 
             UpdateGroupCooldown(entry)
             matched = true
         end
     end
 end
+
+
 
 if matched then
     UpdateLayout()
@@ -1477,7 +1651,8 @@ if matched then
     end
 end
 
-    return
+return
+
 end
 
 if event == "SPELL_UPDATE_COOLDOWN"
@@ -1571,8 +1746,179 @@ function RC_BroadcastMyActiveCooldowns()
     end
 end
 
+
+RC.auraCooldownSeen = RC.auraCooldownSeen or {}
+
+local function RC_GetAuraSpellID(unit, index)
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
+        if aura and aura.spellId then
+            return tonumber(tostring(aura.spellId))
+        end
+    end
+
+    if UnitAura then
+        local _, _, _, _, _, _, _, _, _, spellID = UnitAura(unit, index, "HELPFUL")
+        return tonumber(tostring(spellID))
+    end
+
+    return nil
+end
+
+local RC_DEBUG_AURA_NAME = "Nikirû" -- change this to the player you are testing
+
+local function RC_DebugAurasForUnit(unit)
+    if not unit or not UnitExists(unit) then return end
+
+    local unitName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+    if not unitName or unitName == "" then return end
+
+    local unitBase = tostring(unitName):gsub("%-.+", "")
+    local debugBase = tostring(RC_DEBUG_AURA_NAME or ""):gsub("%-.+", "")
+
+    if unitBase ~= debugBase then return end
+
+    for i = 1, 40 do
+        local auraSpellID = RC_GetAuraSpellID(unit, i)
+        auraSpellID = tonumber(tostring(auraSpellID or ""))
+
+        if not auraSpellID then
+            break
+        end
+
+
+    end
+end
+
+local function RC_StartObservedCooldown(unit, spellID, reason)
+    spellID = tonumber(spellID)
+    if not spellID then return end
+    if not UnitExists(unit) then return end
+
+    local fullName = (GetUnitName and GetUnitName(unit, true)) or nil
+
+    if not fullName or fullName == "" then
+        local name, realm = UnitName(unit)
+        if not name then return end
+
+        fullName = name
+
+        if realm and realm ~= "" then
+            fullName = fullName .. "-" .. realm
+        end
+    end
+
+    local baseName = tostring(fullName:gsub("%-.+", ""))
+
+    for _, entry in ipairs(RC.entries or {}) do
+        local owner = entry.owner and tostring(entry.owner) or ""
+        local ownerBase = owner:gsub("%-.+", "")
+
+        if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
+           
+
+		   UpdateGroupCooldown(entry)
+            return true
+        end
+    end
+end
+
+local function RC_HandleUnitAuraCooldown(unit)
+    if not unit or not UnitExists(unit) then return end
+    if not RC_COOLDOWN_AURA_MAP then return end
+
+    local guid = UnitGUID(unit)
+    if not guid then return end
+
+    for i = 1, 40 do
+       local auraSpellID = tonumber(tostring(RC_GetAuraSpellID(unit, i) or ""))
+if not auraSpellID then
+    break
+end
+
+local cooldownSpellID = RC_COOLDOWN_AURA_MAP[auraSpellID]
+        if cooldownSpellID then
+            local key = tostring(guid) .. ":" .. tostring(cooldownSpellID)
+            local now = GetTime()
+
+            -- Prevent repeated triggers while the aura remains active.
+            if not RC.auraCooldownSeen[key] or (now - RC.auraCooldownSeen[key]) > 8 then
+                RC.auraCooldownSeen[key] = now
+                RC_StartObservedCooldown(unit, cooldownSpellID, "aura")
+            end
+        end
+    end
+end
+
+if event == "UNIT_AURA" then
+    local unit = ...
+
+   
+
+    if unit and UnitExists(unit) then
+        local name = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+
+        if unit:match("^party") or unit:match("^raid") then
+            for i = 1, 40 do
+                local auraSpellID = RC_GetAuraSpellID(unit, i)
+                auraSpellID = tonumber(tostring(auraSpellID or ""))
+
+                if not auraSpellID then
+                    break
+                end
+
+
+            end
+        end
+
+        RC_HandleUnitAuraCooldown(unit)
+    end
+
+    return
+end
+
 if event == "UNIT_SPELLCAST_SUCCEEDED" then
     local unit, castGUID, spellID = ...
+	
+	spellID = tonumber(spellID)
+if not unit or not spellID or not UnitExists(unit) then return end
+
+if spellID == 264667 then
+    spellID = 272678
+elseif spellID == 21169 then
+    spellID = 20608
+end
+
+if not HEALING_COOLDOWNS or not HEALING_COOLDOWNS[spellID] then
+    return
+end
+
+local fullName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+if not fullName or fullName == "" then return end
+
+local baseName = fullName:gsub("%-.+$", "")
+
+for _, entry in ipairs(RC.entries or {}) do
+    local owner = tostring(entry.owner or "")
+    local ownerBase = owner:gsub("%-.+$", "")
+
+    if tonumber(entry.spellID) == spellID
+    and (
+        owner == fullName
+        or owner == baseName
+        or ownerBase == baseName
+    ) then
+        UpdateGroupCooldown(entry)
+        UpdateLayout()
+
+        if not InCombatLockdown() then
+            RebuildOrderedList()
+            UpdateLayout()
+        end
+
+        break
+    end
+end
 
     -- Normalize spellID (avoids taint/secret-number comparisons)
 spellID = tonumber(tostring(spellID))
@@ -1868,7 +2214,7 @@ local SPEC_FILTER = {
     -- EVOKER
     [359816] = { [1467] = true }, -- Dream Flight
     [363534] = { [1467] = true }, -- Rewind
-    [374227] = { [1467] = true }, -- Zephyr
+  [374227] = { [1467] = true, [1468] = true, [1473] = true }, -- Zephyr
 }
 
 ------------------------------------------------
@@ -1997,6 +2343,7 @@ font = "Fonts\\FRIZQT__.TTF",
 	spellTextSize = 12,
 cdTextSize    = 12,
 shortSpellNames = true,
+showPlayerNameWhenReady = true,
 
 }
 
@@ -2389,18 +2736,22 @@ if allow and unit == "player" then
     end
 end
 
--- ONLY SHOW OTHER PLAYERS IF THEY WERE RECENTLY CONFIRMED BY FULL ADDON / CLIENT PLUGIN
+-- ONLY SHOW OTHER PLAYERS IF THEY WERE CONFIRMED BY FULL ADDON / CLIENT PLUGIN
+-- Do not hide confirmed users mid-run/fight just because addon comms are unreliable.
 if allow and unit ~= "player" then
     local hasSpellList =
         RaidCooldownsDB
         and RaidCooldownsDB.senderSpells
-        and RaidCooldownsDB.senderSpells[baseName]
-        and RaidCooldownsDB.senderSpells[baseName] ~= ""
-        and RaidCooldownsDB.senderSpells[baseName] ~= "EMPTY"
+        and (
+            RaidCooldownsDB.senderSpells[baseName]
+            or RaidCooldownsDB.senderSpells[name]
+        )
 
-    local recentlySeen = RC_HasRecentSender and RC_HasRecentSender(baseName)
+    if hasSpellList == "" or hasSpellList == "EMPTY" then
+        hasSpellList = nil
+    end
 
-    if not hasSpellList or not recentlySeen then
+    if not hasSpellList then
         allow = false
     end
 end
@@ -3229,8 +3580,24 @@ shortNamesCB:SetScript("OnClick", function(self)
     UpdateLayout()
 end)
 
+local showReadyNameCB = CreateFrame(
+    "CheckButton",
+    nil,
+    trackingOptionsCard,
+    "InterfaceOptionsCheckButtonTemplate"
+)
 
-trackingOptionsCard:Add(shortNamesCB, 14)
+NormalizeCheckButton(showReadyNameCB)
+showReadyNameCB.Text:SetText("Show Player Name")
+showReadyNameCB:SetChecked(RaidCooldownsDB.settings.showPlayerNameWhenReady ~= false)
+
+showReadyNameCB:SetScript("OnClick", function(self)
+    RaidCooldownsDB.settings.showPlayerNameWhenReady = self:GetChecked() and true or false
+    UpdateLayout()
+end)
+
+trackingOptionsCard:Add(shortNamesCB, 8)
+trackingOptionsCard:Add(showReadyNameCB, 8)
 
 
 -- Enable/Disable All (Tracked Spells)
@@ -3259,7 +3626,7 @@ disableAllBtn:SetScript("OnClick", function()
 end)
 
 -- Place buttons under the checkbox, side-by-side
-enableAllBtn:SetPoint("TOPLEFT", shortNamesCB, "BOTTOMLEFT", 0, -10)
+enableAllBtn:SetPoint("TOPLEFT", shortNamesCB, "BOTTOMLEFT", 0, 4)
 disableAllBtn:SetPoint("LEFT", enableAllBtn, "RIGHT", 10, 0)
 
 
@@ -5069,55 +5436,11 @@ local function DragFollowCursor_OnUpdate(self)
     self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx, cy)
 end
 
-------------------------------------------------
--- COOLDOWN BAR UPDATE (DRAG SAFE)
-------------------------------------------------
-local function CooldownOnUpdate(self, elapsed)
-    local now = GetTime()
-
-    -- CD text color from settings (do not overwrite with hardcoded colors)
-    local s = RaidCooldownsDB and RaidCooldownsDB.settings
-    local c = s and s.cdTextColor
-    local cr = (c and c.r) or 1
-    local cg = (c and c.g) or 1
-    local cb = (c and c.b) or 1
-    local ca = (c and c.a) or 1
 
 
-    for _, entry in ipairs(GetVisibleOrdered()) do
-        local bar = entry.bar
 
-        if bar and bar:IsShown() and bar.cdText then
-            if entry.onCooldown then
-                local remaining = (entry.cooldownEnd or 0) - now
 
-                if remaining <= 0 then
-                    entry.onCooldown = false
-                    bar.fill:SetValue(1)
-                    bar.cdText:SetText("READY")
-                    RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
-                else
-                    bar.fill:SetValue(remaining / (entry.cooldownDuration or 1))
-                    bar.cdText:SetText(FormatTime(remaining))
-                    RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
-                end
-            else
-                bar.fill:SetValue(1)
-                bar.cdText:SetText("READY")
-                RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
-            end
 
-            bar.cdText:Show()
-        end
-    end
-end
-
-panel:SetScript("OnUpdate", function(self, elapsed)
-    if RC.dragging then
-        UpdateDragPreview() -- compute targets / may relayout
-    end
-    CooldownOnUpdate(self, elapsed)
-end)
 
 
 
@@ -5193,13 +5516,97 @@ local function StripRealm(fullName)
     return fullName:match("^[^-]+") or fullName
 end
 
+
 ------------------------------------------------
 -- BUILD BAR LABEL TEXT
 ------------------------------------------------
 local function GetBarLabelText(entry)
+    local spellName = GetDisplaySpellName(entry.spellID, entry.name)
+
+    -- When the bar is READY, optionally hide the player name.
+    if not entry.onCooldown
+    and RaidCooldownsDB
+    and RaidCooldownsDB.settings
+    and RaidCooldownsDB.settings.showPlayerNameWhenReady == false then
+        return spellName
+    end
+
     local toon = StripRealm(entry.owner)
-    return toon .. " - " .. GetDisplaySpellName(entry.spellID, entry.name)
+    return toon .. " - " .. spellName
 end
+
+
+
+------------------------------------------------
+-- COOLDOWN BAR UPDATE (DRAG SAFE)
+------------------------------------------------
+local function CooldownOnUpdate(self, elapsed)
+    local now = GetTime()
+
+    local s = RaidCooldownsDB and RaidCooldownsDB.settings
+    local c = s and s.cdTextColor
+    local cr = (c and c.r) or 1
+    local cg = (c and c.g) or 1
+    local cb = (c and c.b) or 1
+    local ca = (c and c.a) or 1
+
+    for _, entry in ipairs(GetVisibleOrdered()) do
+        local bar = entry.bar
+
+        if bar and bar:IsShown() and bar.cdText and bar.fill then
+local duration = tonumber(entry.cooldownDuration) or RC_GetEffectiveCooldown(entry.spellID) or 1
+
+
+
+local active =
+    entry.onCooldown
+    and entry.cooldownEnd
+    and entry.cooldownEnd > now
+
+if active then
+    local remaining = entry.cooldownEnd - now
+    duration = math.max(duration, 1)
+
+    local value = remaining / duration
+
+                if value < 0 then value = 0 end
+                if value > 1 then value = 1 end
+
+                bar.fill:SetValue(value)
+                bar.cdText:SetText(FormatTime(remaining))
+                RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
+            else
+                if entry.onCooldown then
+                    entry.onCooldown = false
+                    entry.cooldownStart = nil
+                    entry.cooldownDuration = nil
+                    entry.cooldownEnd = nil
+
+                    if RC_SaveCooldownState then
+                        RC_SaveCooldownState(entry)
+                    end
+                end
+
+               bar.fill:SetValue(1)
+bar.cdText:SetText("READY")
+RC_SetTextColor(bar.cdText, cr, cg, cb, ca)
+
+if bar.label then
+    bar.label:SetText(GetBarLabelText(entry))
+end
+            end
+
+            bar.cdText:Show()
+        end
+    end
+end
+
+panel:SetScript("OnUpdate", function(self, elapsed)
+    if RC.dragging then
+        UpdateDragPreview() -- compute targets / may relayout
+    end
+    CooldownOnUpdate(self, elapsed)
+end)
 
 
 ------------------------------------------------
@@ -5261,16 +5668,28 @@ function UpdateGroupCooldown(group)
         return
     end
 
-    if group.onCooldown then
+    local now = GetTime()
+
+    -- Already actively counting down: do not restart.
+    if group.onCooldown and group.cooldownEnd and group.cooldownEnd > now then
         return
     end
+
+    -- Duplicate trigger protection.
+    if group._lastCooldownTrigger and (now - group._lastCooldownTrigger) < 3 then
+        return
+    end
+
+    group._lastCooldownTrigger = now
+
+   
 
     local spellData = HEALING_COOLDOWNS[group.spellID]
     if not spellData then
         return
     end
 
-    local start = GetTime()
+   local start = now
     local duration = RC_GetEffectiveCooldown(group.spellID)
 
     if not duration or duration <= 0 then
@@ -5436,11 +5855,17 @@ end
 -- APPLY CLASS COLOR
 ------------------------------------------------
 local function ApplyClassColor(bar, class)
+    if not bar or not bar.fill then return end
+
     local c = RAID_CLASS_COLORS[class]
     if c then
         bar.fill:SetStatusBarColor(c.r * 0.85, c.g * 0.85, c.b * 0.85)
     else
         bar.fill:SetStatusBarColor(0.7, 0.7, 0.7)
+    end
+
+    if ApplyClassBackdropVisibility then
+        ApplyClassBackdropVisibility(bar)
     end
 end
 
@@ -5449,10 +5874,12 @@ local function ApplyClassBackdropVisibility(bar)
 
     local s = RaidCooldownsDB and RaidCooldownsDB.settings or {}
 
+    -- Do not Hide()/Show() the statusbar during layout updates.
+    -- Hiding/showing the fill causes flashing during countdown/refresh.
     if s.removeClassBackdrop then
-        bar.fill:Hide()
+        bar.fill:SetAlpha(0)
     else
-        bar.fill:Show()
+        bar.fill:SetAlpha(1)
     end
 end
 
@@ -5624,12 +6051,15 @@ end)
             bar.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             bar.icon:SetTexture(C_Spell.GetSpellTexture(entry.spellID))
 
-            -- FILL
-            bar.fill = CreateFrame("StatusBar", nil, bar)
-            bar.fill:SetFrameLevel(bar:GetFrameLevel())
-            bar.fill:SetStatusBarTexture("Interface\\TARGETINGFRAME\\UI-StatusBar")
-            bar.fill:SetMinMaxValues(0, 1)
-            bar.fill:SetValue(1)
+           -- FILL
+bar.fill = CreateFrame("StatusBar", nil, bar)
+bar.fill:SetFrameLevel(bar:GetFrameLevel())
+bar.fill:SetStatusBarTexture("Interface\\TARGETINGFRAME\\UI-StatusBar")
+bar.fill:SetMinMaxValues(0, 1)
+
+-- Do not reset fill here.
+-- PreCreateAllBars can run during layout refresh and make active cooldowns jump to full.
+-- bar.fill:SetValue(1)
 
             -- TEXT
             local font = RaidCooldownsDB.settings.font or "Fonts\\FRIZQT__.TTF"
@@ -5882,21 +6312,35 @@ UpdateDeathVisual = function(entry)
     end
 end
 
+
+local function RC_SetFillReadySafe(bar, entry, reason)
+    if not bar or not bar.fill then return end
+
+if entry
+and entry.onCooldown
+and entry.cooldownEnd
+and entry.cooldownEnd > GetTime() then
+      
+        return
+    end
+
+    bar.fill:SetValue(1)
+end
+
 -- RESETBARVISUALS (FINAL / CORRECT)
 ------------------------------------------------
 local function ResetBarVisuals(bar, entry)
+    if not bar or not entry then return end
 
-    local s = RaidCooldownsDB.settings
+    local s = RaidCooldownsDB and RaidCooldownsDB.settings
     if not s then return end
 
     ------------------------------------------------
     -- Visibility
     ------------------------------------------------
-    bar:Show()
-    bar.icon:Show()
-    bar.fill:Show()
-    bar.label:Show()
-
+  bar:Show()
+bar.icon:Show()
+bar.label:Show()
     if bar.cdText then
         bar.cdText:Show()
     end
@@ -5917,18 +6361,21 @@ local function ResetBarVisuals(bar, entry)
     if bar.cdText then
         bar.cdText:SetFont(font, s.cdTextSize or 12, "OUTLINE")
     end
-	
-	    -- Text colors (safe / compatible across clients)
+
+    ------------------------------------------------
+    -- Text colors
+    ------------------------------------------------
     s.spellNameColor = s.spellNameColor or { r = 1, g = 1, b = 1, a = 1 }
     s.cdTextColor    = s.cdTextColor    or { r = 1, g = 0.82, b = 0, a = 1 }
 
     RC_SetTextColor(bar.label, s.spellNameColor)
+
     if bar.cdText then
         RC_SetTextColor(bar.cdText, s.cdTextColor)
     end
 
-------------------------------------------------
-    -- POSITION SPELL NAME
+    ------------------------------------------------
+    -- Position spell name
     ------------------------------------------------
     local sx = s.spellTextOffsetX or 0
     local sy = s.spellTextOffsetY or 0
@@ -5937,7 +6384,7 @@ local function ResetBarVisuals(bar, entry)
     bar.label:SetPoint("LEFT", bar, "LEFT", s.barHeight + 4 + sx, sy)
 
     ------------------------------------------------
-    -- POSITION COOLDOWN TEXT
+    -- Position cooldown text
     ------------------------------------------------
     if bar.cdText then
         local cx = s.cdTextOffsetX or 0
@@ -5948,22 +6395,44 @@ local function ResetBarVisuals(bar, entry)
     end
 
     ------------------------------------------------
-    -- Reset Cooldown Visuals
+    -- Class color / backdrop
     ------------------------------------------------
-    bar.fill:SetValue(1)
+    ApplyClassColor(bar, entry.class)
+    ApplyClassBackdropVisibility(bar)
+    bar.fill:SetMinMaxValues(0, 1)
+
+    ------------------------------------------------
+    -- Cooldown visuals
+    -- Do not force active cooldowns back to full during layout refresh.
+    ------------------------------------------------
+if entry.onCooldown and entry.cooldownEnd and entry.cooldownEnd > GetTime() then
+    local remaining = entry.cooldownEnd - GetTime()
+    local duration = tonumber(entry.cooldownDuration) or RC_GetEffectiveCooldown(entry.spellID) or 1
+    duration = math.max(duration, 1)
+
+    local value = remaining / duration
+    if value < 0 then
+        value = 0
+    elseif value > 1 then
+        value = 1
+    end
+
+    -- Important: layout refresh/show must restore the real cooldown value,
+    -- otherwise the statusbar can briefly render full before OnUpdate corrects it.
+    bar.fill:SetValue(value)
+
+    if bar.cdText then
+        bar.cdText:SetText(FormatTime(remaining))
+    end
+else
+    RC_SetFillReadySafe(bar, entry, "ResetBarVisuals")
 
     if bar.cdText then
         bar.cdText:SetText("READY")
     end
+end
 
-    ------------------------------------------------
-    -- Color
-    ------------------------------------------------
-ApplyClassColor(bar, entry.class)
-ApplyClassBackdropVisibility(bar)
-
-UpdateDeathVisual(entry)
-
+    UpdateDeathVisual(entry)
 end
 
 
