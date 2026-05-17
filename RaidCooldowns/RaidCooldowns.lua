@@ -295,13 +295,31 @@ local HEALING_COOLDOWNS = {
 
 
 local RC_COOLDOWN_AURA_MAP = {
+    -- Paladin
     [31884]  = 31884,  -- Avenging Wrath
     [31821]  = 31821,  -- Aura Mastery
+
+    -- Druid
     [740]    = 740,    -- Tranquility
+    [33891]  = 33891,  -- Incarnation: Tree of Life
+
+    -- Priest
     [64843]  = 64843,  -- Divine Hymn
+    [47788]  = 47788,  -- Guardian Spirit
+    [33206]  = 33206,  -- Pain Suppression
+
+    -- Monk
     [115310] = 115310, -- Revival
-    [114052] = 114052, -- Ascendance
+
+    -- Evoker
     [374227] = 374227, -- Zephyr
+    [363534] = 363534, -- Rewind
+
+    -- Warrior
+    [97463]  = 97462,  -- Rallying Cry aura -> Rallying Cry spell
+
+    -- Shaman
+    -- [114052] = 114052, -- Ascendance disabled due false triggers
 }
 
 
@@ -347,7 +365,7 @@ RC._lastDragKey     = nil      -- prevents UpdateLayout spam
 RC.barPool = RC.barPool or {}   -- key -> bar frame
 
 RC.debugShowAllSpells = false
-RC.version = "0.4.6"
+RC.version = "0.4.7"
 
 ------------------------------------------------
 -- APPLY PANEL SIZE FROM SETTINGS 
@@ -995,14 +1013,7 @@ local function RC_StartCooldownByObservedName(sourceName, spellID, reason)
             local ownerBase = RC_BaseNameForCompare(owner)
 
             if owner == sourceName or ownerBase == sourceBase then
-                if RC and RC.debugComms then
-                    print("|cff00ff00RC CLEU CD MATCH|r",
-                        "source=", tostring(sourceName),
-                        "owner=", tostring(owner),
-                        "spellID=", tostring(spellID),
-                        "reason=", tostring(reason)
-                    )
-                end
+               
 
                 UpdateGroupCooldown(entry)
                 matched = true
@@ -1021,14 +1032,7 @@ local function RC_StartCooldownByObservedName(sourceName, spellID, reason)
         return true
     end
 
-    if RC and RC.debugComms then
-        print("|cffff5555RC CLEU CD NO MATCH|r",
-            "source=", tostring(sourceName),
-            "sourceBase=", tostring(sourceBase),
-            "spellID=", tostring(spellID),
-            "reason=", tostring(reason)
-        )
-    end
+
 
     return false
 end
@@ -1680,6 +1684,73 @@ or event == "GROUP_ROSTER_UPDATE" then
     end
 end
 
+local function RC_SendCooldownCastNow(spellID)
+    spellID = tonumber(tostring(spellID or ""))
+    if not spellID then return end
+
+    if spellID == 264667 then
+        spellID = 272678
+    elseif spellID == 21169 then
+        spellID = 20608
+    end
+
+    if not HEALING_COOLDOWNS or not HEALING_COOLDOWNS[spellID] then
+        return
+    end
+
+    local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
+    if not playerName or playerName == "" then return end
+
+    local payload = tostring(playerName) .. "|" .. tostring(spellID)
+    local sent = {}
+
+    local function SendRC(channel, target)
+        if not channel then return end
+
+        local key = tostring(channel) .. ":" .. tostring(target or "")
+        if sent[key] then return end
+        sent[key] = true
+
+        RC_SendAddonMessageSafe("RAIDCOOLDOWNS", payload, channel, target)
+    end
+
+    local function SendWhispersToGroup()
+        if IsInRaid() then
+            for i = 1, GetNumGroupMembers() do
+                local unitID = "raid" .. i
+                if UnitExists(unitID) and not UnitIsUnit(unitID, "player") then
+                    local targetName = GetUnitName and GetUnitName(unitID, true) or UnitName(unitID)
+                    if targetName and targetName ~= "" then
+                        SendRC("WHISPER", targetName)
+                    end
+                end
+            end
+        elseif IsInGroup() then
+            for i = 1, 4 do
+                local unitID = "party" .. i
+                if UnitExists(unitID) then
+                    local targetName = GetUnitName and GetUnitName(unitID, true) or UnitName(unitID)
+                    if targetName and targetName ~= "" then
+                        SendRC("WHISPER", targetName)
+                    end
+                end
+            end
+        end
+    end
+
+    if IsInRaid() then
+        SendRC("RAID")
+        SendWhispersToGroup()
+    elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        SendRC("INSTANCE_CHAT")
+        SendWhispersToGroup()
+    elseif IsInGroup() then
+        SendRC("PARTY")
+        SendRC("INSTANCE_CHAT")
+        SendWhispersToGroup()
+    end
+end
+
 function RC_BroadcastMyActiveCooldowns()
     local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
     if not playerName or playerName == "" then return end
@@ -1815,11 +1886,18 @@ local function RC_StartObservedCooldown(unit, spellID, reason)
         local ownerBase = owner:gsub("%-.+", "")
 
         if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
-           
+    UpdateGroupCooldown(entry)
 
-		   UpdateGroupCooldown(entry)
-            return true
+    -- If this is my own aura/cooldown, broadcast it immediately.
+    -- This helps boss fights where UNIT_SPELLCAST_SUCCEEDED may not fire reliably.
+    if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
+        if RC_SendCooldownCastNow then
+            RC_SendCooldownCastNow(spellID)
         end
+    end
+
+    return true
+end
     end
 end
 
@@ -1853,6 +1931,26 @@ end
 if event == "UNIT_AURA" then
     local unit = ...
 
+    if unit and UnitExists(unit) and (unit:match("^party") or unit:match("^raid")) then
+        local name = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+      local testName = "Nikirû"
+
+if unit and UnitExists(unit) and (unit:match("^party") or unit:match("^raid")) then
+    local name = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
+    local base = tostring(name or ""):gsub("%-.+$", "")
+
+    if base == testName then
+        RC._auraDebugThrottle = RC._auraDebugThrottle or {}
+
+        local now = GetTime()
+        if not RC._auraDebugThrottle[base] or now - RC._auraDebugThrottle[base] > 5 then
+            RC._auraDebugThrottle[base] = now
+
+        end
+    end
+end
+    end
+
    
 
     if unit and UnitExists(unit) then
@@ -1878,154 +1976,82 @@ if event == "UNIT_AURA" then
 end
 
 if event == "UNIT_SPELLCAST_SUCCEEDED" then
-    local unit, castGUID, spellID = ...
+    local unit, castGUID, rawSpellID = ...
 	
-	spellID = tonumber(spellID)
-if not unit or not spellID or not UnitExists(unit) then return end
+	    if not unit or not UnitExists(unit) then return end
 
-if spellID == 264667 then
-    spellID = 272678
-elseif spellID == 21169 then
-    spellID = 20608
-end
-
-if not HEALING_COOLDOWNS or not HEALING_COOLDOWNS[spellID] then
-    return
-end
-
-local fullName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
-if not fullName or fullName == "" then return end
-
-local baseName = fullName:gsub("%-.+$", "")
-
-for _, entry in ipairs(RC.entries or {}) do
-    local owner = tostring(entry.owner or "")
-    local ownerBase = owner:gsub("%-.+$", "")
-
-    if tonumber(entry.spellID) == spellID
-    and (
-        owner == fullName
-        or owner == baseName
-        or ownerBase == baseName
-    ) then
-        UpdateGroupCooldown(entry)
-        UpdateLayout()
-
-        if not InCombatLockdown() then
-            RebuildOrderedList()
-            UpdateLayout()
-        end
-
-        break
+    -- Avoid boss-combat secret-number taint from other raid/party units.
+    -- Track other players through addon messages / UNIT_AURA fallback instead.
+    if not (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
+        return
     end
-end
-
-    -- Normalize spellID (avoids taint/secret-number comparisons)
-spellID = tonumber(tostring(spellID))
-if spellID == 264667 then
-    spellID = 272678
-end
-
--- Shaman Reincarnation: normalize actual self-res cast to tracked passive cooldown
-if spellID == 21169 then
-    spellID = 20608
-end
-    if not spellID then return end
-
-    if not unit or not spellID then return end
-    if not UnitExists(unit) then return end
-	
-
-	
-	
-	if unit and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
-    local tracked = HEALING_COOLDOWNS and HEALING_COOLDOWNS[spellID]
-    if tracked then
-     local playerName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-local payload = tostring(playerName) .. "|" .. tostring(spellID)
-
-local sent = {}
-
-local function SendRC(channel, target)
-    if not channel then return end
-
-    local key = tostring(channel) .. ":" .. tostring(target or "")
-    if sent[key] then return end
-    sent[key] = true
 
    
 
-   RC_SendAddonMessageSafe("RAIDCOOLDOWNS", payload, channel, target)
-end
+    -- Convert secret/tainted spellID into a normal Lua number before comparisons.
+    local spellID = tonumber(tostring(rawSpellID or ""))
+    if not spellID then return end
 
-local function SendRCWhispersToGroup()
-    local myName = GetUnitName and GetUnitName("player", true) or UnitName("player")
-    local myBase = tostring(myName or ""):gsub("%-.+", "")
+    if spellID == 264667 then
+        spellID = 272678
+    elseif spellID == 21169 then
+        spellID = 20608
+    end
 
-    if IsInRaid() then
-        for i = 1, GetNumGroupMembers() do
-            local unit = "raid" .. i
-            if UnitExists(unit) and not UnitIsUnit(unit, "player") then
-                local targetName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
-                if targetName and targetName ~= "" then
-                    SendRC("WHISPER", targetName)
-                end
-            end
+    if not HEALING_COOLDOWNS or not HEALING_COOLDOWNS[spellID] then
+        return
+    end
+	
+	-- Send immediately so other RaidCooldowns users can track this during boss fights.
+RC_SendCooldownCastNow(spellID)
+
+    local fullName = GetUnitName and GetUnitName(unit, true) or nil
+
+    if not fullName or fullName == "" then
+        local name, realm = UnitName(unit)
+        if not name or name == "" then return end
+
+        fullName = tostring(name)
+
+        if realm and realm ~= "" then
+            fullName = fullName .. "-" .. realm
         end
-    elseif IsInGroup() then
-        for i = 1, 4 do
-            local unit = "party" .. i
-            if UnitExists(unit) then
-                local targetName = GetUnitName and GetUnitName(unit, true) or UnitName(unit)
-                if targetName and targetName ~= "" then
-                    SendRC("WHISPER", targetName)
-                end
-            end
-        end
     end
-end
 
-if IsInRaid() then
-    SendRC("RAID")
-    SendRCWhispersToGroup()
-elseif IsInGroup() then
-    SendRC("PARTY")
-    SendRC("INSTANCE_CHAT")
-    SendRCWhispersToGroup()
-elseif IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-    SendRC("INSTANCE_CHAT")
-    SendRCWhispersToGroup()
-end
-    end
-end
+    fullName = tostring(fullName)
+    local baseName = fullName:gsub("%-.+$", "")
 
-   local fullName = (GetUnitName and GetUnitName(unit, true)) or nil
-if not fullName or fullName == "" then
-    local name, realm = UnitName(unit)
-    if not name then return end
-    fullName = name
-    if realm and realm ~= "" then
-        fullName = fullName .. "-" .. realm
-    end
-end
-local baseName = tostring(fullName:gsub("%-.+", ""))
-local didLocalMatch = false
-    -- Match correct entry
+    local didLocalMatch = false
+
     for _, entry in ipairs(RC.entries or {}) do
-        local owner = entry.owner and string.format("%s", entry.owner) or ""
-        local ownerBase = owner:gsub("%-.+", "")
-if entry.spellID == spellID and (owner == fullName or owner == baseName or ownerBase == baseName) then
-    UpdateGroupCooldown(entry)
-    didLocalMatch = true
+        local entrySpellID = tonumber(tostring(entry.spellID or ""))
 
-    if UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet") then
+        if entrySpellID == spellID then
+            local owner = tostring(entry.owner or "")
+            local ownerBase = owner:gsub("%-.+$", "")
+
+            if owner == fullName
+            or owner == baseName
+            or ownerBase == baseName then
+                UpdateGroupCooldown(entry)
+                didLocalMatch = true
+
+                if UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet") then
+                    if RC_BroadcastMyActiveCooldowns then
+                        C_Timer.After(0.1, RC_BroadcastMyActiveCooldowns)
+                    end
+                end
+
+                break
+            end
+        end
+    end
+
+    -- Only broadcast your own tracked casts.
+    if not didLocalMatch and (UnitIsUnit(unit, "player") or UnitIsUnit(unit, "pet")) then
         if RC_BroadcastMyActiveCooldowns then
             C_Timer.After(0.1, RC_BroadcastMyActiveCooldowns)
         end
-    end
-
-    break
-end
     end
 
     return
@@ -3605,8 +3631,15 @@ local enableAllBtn = CreateFrame("Button", nil, trackingOptionsCard, "UIPanelBut
 enableAllBtn:SetSize(120, 22)
 enableAllBtn:SetText("Enable All")
 enableAllBtn:SetScript("OnClick", function()
-    -- Checked spells are stored as nil; unchecked as false
+    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
     wipe(RaidCooldownsDB.trackedSpells)
+
+    local profile = GetProfile and GetProfile() or nil
+    if profile then
+        profile.trackedSpells = profile.trackedSpells or {}
+        wipe(profile.trackedSpells)
+    end
+
     UpdateLayout()
     BuildTrackingUI()
 end)
@@ -3615,12 +3648,21 @@ local disableAllBtn = CreateFrame("Button", nil, trackingOptionsCard, "UIPanelBu
 disableAllBtn:SetSize(120, 22)
 disableAllBtn:SetText("Disable All")
 disableAllBtn:SetScript("OnClick", function()
+    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
     wipe(RaidCooldownsDB.trackedSpells)
+
+    local profile = GetProfile and GetProfile() or nil
+    if profile then
+        profile.trackedSpells = profile.trackedSpells or {}
+        wipe(profile.trackedSpells)
+    end
+
     for spellID, _ in pairs(HEALING_COOLDOWNS or {}) do
         if type(spellID) == "number" then
-            RaidCooldownsDB.trackedSpells[spellID] = false
+            SetSpellTracked(spellID, false)
         end
     end
+
     UpdateLayout()
     BuildTrackingUI()
 end)
@@ -4880,18 +4922,12 @@ function RC.AddCategorySection(parentCard, title, spellList)
         cb.Text:SetText(spellName)
         cb:SetChecked(IsSpellTracked(spellID))
 
-        cb:SetScript("OnClick", function(self)
-            RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
+cb:SetScript("OnClick", function(self)
+    SetSpellTracked(spellID, self:GetChecked())
 
-            if self:GetChecked() then
-                RaidCooldownsDB.trackedSpells[spellID] = nil
-            else
-                RaidCooldownsDB.trackedSpells[spellID] = false
-            end
-
-            RebuildOrderedList()
-            UpdateLayout()
-        end)
+    RebuildOrderedList()
+    UpdateLayout()
+end)
 
         parentCard:Add(cb, 8)
     end
@@ -5472,7 +5508,32 @@ local function GetDisplaySpellName(spellID, fallbackName)
 end
 
 
+function SetSpellTracked(spellID, enabled)
+    spellID = tonumber(spellID)
+    if not spellID then return end
 
+    RaidCooldownsDB = RaidCooldownsDB or {}
+    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
+
+    local profile = GetProfile and GetProfile() or nil
+    if profile then
+        profile.trackedSpells = profile.trackedSpells or {}
+    end
+
+    if enabled then
+        RaidCooldownsDB.trackedSpells[spellID] = nil
+
+        if profile then
+            profile.trackedSpells[spellID] = nil
+        end
+    else
+        RaidCooldownsDB.trackedSpells[spellID] = false
+
+        if profile then
+            profile.trackedSpells[spellID] = false
+        end
+    end
+end
 
 ------------------------------------------------
 -- IS SPELL TRACKED (PROFILE SAFE / DIRECT)
@@ -9049,14 +9110,8 @@ do
                 cb.Text:SetText(spell.name)
 
                 cb:SetChecked(IsSpellTracked(spell.id))
-                cb:SetScript("OnClick", function(self)
-    RaidCooldownsDB.trackedSpells = RaidCooldownsDB.trackedSpells or {}
-
-    if self:GetChecked() then
-        RaidCooldownsDB.trackedSpells[spell.id] = nil
-    else
-        RaidCooldownsDB.trackedSpells[spell.id] = false
-    end
+cb:SetScript("OnClick", function(self)
+    SetSpellTracked(spell.id, self:GetChecked())
 
     RC.previewOrdered = nil
     RC.dragging = nil
